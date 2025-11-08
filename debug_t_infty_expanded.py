@@ -496,6 +496,10 @@ def debug_remaining_time_calculation(log_text: str, tau: float, summary: Dict[st
     """Debug remaining time calculation in extreme detail."""
     print_separator("ULTRA-DETAILED REMAINING TIME CALCULATION")
 
+    # Handle None summary
+    if summary is None:
+        summary = {}
+
     # Get SVB estimation
     est = debug_svb_estimation_step_by_step(log_text)
 
@@ -640,6 +644,10 @@ def debug_final_t_infty_calculation(log_text: str, tau: float, summary: Dict[str
     """Debug the final T_infty calculation."""
     print_separator("FINAL T_INFTY CALCULATION")
 
+    # Handle None summary
+    if summary is None:
+        summary = {}
+
     # Check if problem is solved
     print_subsection("SOLUTION STATUS CHECK")
     pr = summary.get("primal")
@@ -722,6 +730,8 @@ def ultra_comprehensive_debug(log_file: str, tau: float = 10.0):
 
     # Step 4: Summary parsing
     summary = debug_summary_parsing_detailed(log_file)
+    if summary is None:
+        summary = {}
 
     # Step 5: SVB estimation
     svb_result = debug_svb_estimation_step_by_step(log_text)
