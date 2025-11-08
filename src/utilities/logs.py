@@ -316,9 +316,12 @@ def compute_T_infty(log_text: str, tau: float, summary: Dict[str, Any]) -> Dict[
             max_node = max(max_node, float(node))
 
     if max_node <= 1.0:
-        warning_msg = f"WARNING: Solver stuck at root node (max_node={max_node}). Using solve time as T_infty."
+        # Set remaining time to very large number since no tree exploration occurred
+        T_rem_large = 1e12  # Very large remaining time
+        T_infty_large = float(tau) + T_rem_large
+        warning_msg = f"WARNING: Solver stuck at root node (max_node={max_node}). T_infty set to very large value ({T_infty_large:.2e})."
         print(warning_msg)
-        return {"T_infty": t, "solved": False, "gap": gap, "details": {"root_only": True}, "warning": warning_msg}
+        return {"T_infty": T_infty_large, "solved": False, "gap": gap, "details": {"root_only": True, "T_rem": T_rem_large}, "warning": warning_msg}
 
     det = estimate_remaining_time(log_text, tau=tau, summary=summary)
     if det.get("error"):
