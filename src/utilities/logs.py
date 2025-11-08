@@ -182,9 +182,9 @@ def parse_progress_series(log_text: str) -> Tuple[List[str], List[Dict[str, Any]
 def estimate_svb_from_log(log_text: str) -> Dict[str, Any]:
     """Estimate (a, kappa, C, varphi) per Theorem, from SCIP progress rows.
 
-    Uses adjacent progress rows to form pairs (Δb/ΔG) vs \overline{G} with
+    Uses adjacent progress rows to form pairs (Δb/ΔG) vs G_bar with
     G = |primal - dual|, b = processed nodes, and fits y = a + kappa * x
-    where y = log(Δb/ΔG), x = \overline{G}.
+    where y = log(Δb/ΔG), x = G_bar.
     """
     _, rows = parse_progress_series(log_text)
     pairs_x: List[float] = []
@@ -292,7 +292,7 @@ def estimate_remaining_time(log_text: str, tau: float, summary: Dict[str, Any]) 
 def compute_T_infty(log_text: str, tau: float, summary: Dict[str, Any]) -> Dict[str, Any]:
     """Compute the extrapolated time-to-optimality surrogate T_infty.
 
-    Returns dict with keys: T_infty, solved (bool), gap, details (dict from estimate_remaining_time if used).
+    Returns dict with keys: T_infty, solved (bool), gap, details (dict from estimate_remaining_time if used), warning (optional).
     """
     pr = summary.get("primal"); du = summary.get("dual")
     gap = None
@@ -306,6 +306,20 @@ def compute_T_infty(log_text: str, tau: float, summary: Dict[str, Any]) -> Dict[
     t = float(summary.get("solve_time", tau))
     if gap is not None and gap <= 0.0:
         return {"T_infty": t, "solved": True, "gap": 0.0, "details": {}}
+
+    # Check for root-only case (max node = 1)
+    _, rows = parse_progress_series(log_text)
+    max_node = 1.0
+    for row in rows:
+        node = row.get("node")
+        if node is not None and math.isfinite(node):
+            max_node = max(max_node, float(node))
+
+    if max_node <= 1.0:
+        warning_msg = f"WARNING: Solver stuck at root node (max_node={max_node}). Using solve time as T_infty."
+        print(warning_msg)
+        return {"T_infty": t, "solved": False, "gap": gap, "details": {"root_only": True}, "warning": warning_msg}
+
     det = estimate_remaining_time(log_text, tau=tau, summary=summary)
     if det.get("error"):
         return {"T_infty": t if gap is None else (tau + t), "solved": False, "gap": gap, "details": det}
@@ -420,8 +434,16 @@ def diagnose_t_infty(log_text: str, tau: float, summary: Dict[str, Any]) -> Dict
         {"G_bar": float(X[j]), "log_db_over_dg": float(Y[j])}
         for j in range(min(len(X), max_show))
     ]
+    # Check max node reached
+    max_node = 1.0
+    for r in rows:
+        node = r.get("node")
+        if node is not None and math.isfinite(float(node)):
+            max_node = max(max_node, float(node))
+
     return {
         "progress_rows": len(rows),
+        "max_node": max_node,
         "raw_pairs_count": n,
         "raw_pairs_sample": raw_pairs,
         "kept_pairs_count": len(X),
@@ -439,8 +461,15 @@ def diagnose_t_infty(log_text: str, tau: float, summary: Dict[str, Any]) -> Dict
 def format_t_infty_diagnostic(diag: Dict[str, Any]) -> str:
     lines = []
     lines.append(f"progress_rows: {diag.get('progress_rows')}")
+    lines.append(f"max_node: {diag.get('max_node')}")
     lines.append(f"raw_pairs_count: {diag.get('raw_pairs_count')}")
     lines.append(f"kept_pairs_count: {diag.get('kept_pairs_count')}")
+
+    # Add warning if stuck at root
+    max_node = diag.get('max_node', 1.0)
+    if max_node <= 1.0:
+        lines.append("WARNING: Solver stuck at root node - no tree exploration!")
+
     ols = diag.get("ols", {})
     lines.append("ols: a={a}, kappa={k}, varphi={v}, C={c}".format(a=ols.get("a"), k=ols.get("kappa"), v=ols.get("varphi"), c=ols.get("C")))
     lines.append(f"left_nodes: {diag.get('left_nodes')}, G_used: {diag.get('G_used')}")
