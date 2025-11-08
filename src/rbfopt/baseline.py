@@ -5,7 +5,7 @@ from pathlib import Path
 
 import rbfopt
 
-from utilities.logs import per_instance_T_infty, diagnose_t_infty, format_t_infty_diagnostic
+from utilities.logs import per_instance_T_infty
 from utilities.scoring import r_hat_ratio
 
 

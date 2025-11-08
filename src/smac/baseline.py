@@ -6,7 +6,7 @@ from pathlib import Path
 import ConfigSpace as CS
 from smac import HyperparameterOptimizationFacade, Scenario
 
-from utilities.logs import per_instance_T_infty, diagnose_t_infty, format_t_infty_diagnostic
+from utilities.logs import per_instance_T_infty
 from utilities.scoring import r_hat_ratio
 from .space import build_configspace
 

@@ -7,7 +7,7 @@ from utilities.whitelist import get_whitelist
 from utilities.scip_cli import get_default_params
 from utilities.logs import shrink_scip_log_for_gpt
 from utilities.scoring import r_hat_ratio, gm
-from utilities.logs import per_instance_T_infty, diagnose_t_infty, format_t_infty_diagnostic
+from utilities.logs import per_instance_T_infty
 from utilities.runner import run_instance
 from .components.features_batch import collect_batch_features, instance_name
 from .components.validator import ParamValidator
@@ -201,29 +201,6 @@ def run_tuning(
             f"[Instance {e.get('index',0)}: {e.get('instance','?')}]\n{e.get('snippet','')}\n" for e in sorted(logs_indexed, key=lambda x: x.get("index", 0))
         )
 
-        # Write per-instance diagnostics for T_infty (full and concise)
-        try:
-            diag_path = os.path.join(outdir, f"t_infty_diagnostics_trial_{trial_idx}.txt")
-            with open(diag_path, "w", encoding="utf-8") as df:
-                for inst_name, mtr in per_m.items():
-                    lp = mtr.get("log_path")
-                    try:
-                        log_text = open(lp, "r", encoding="utf-8", errors="ignore").read() if lp else ""
-                    except Exception:
-                        log_text = ""
-                    diag = diagnose_t_infty(log_text, tau=time_limit, summary=mtr)
-                    # concise line in GPT log
-                    gpt_log.write(
-                        f"T_DIAG [{inst_name}] left={diag.get('left_nodes')}, G={diag.get('G_used')}, "
-                        f"theta={diag.get('theta')}, C={diag.get('ols',{}).get('C')}, varphi={diag.get('ols',{}).get('varphi')}, "
-                        f"T_rem={diag.get('T_rem')}, T_infty={diag.get('T_infty')}\n"
-                    )
-                    # detailed block in diagnostics file
-                    df.write(f"=== {inst_name} ===\n")
-                    df.write(format_t_infty_diagnostic(diag) + "\n\n")
-            gpt_log.write("\n")
-        except Exception:
-            pass
 
         history_data.append({
             "trial": trial_idx,
