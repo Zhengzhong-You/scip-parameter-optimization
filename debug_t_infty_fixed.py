@@ -17,8 +17,7 @@ from utilities.logs import (
     parse_progress_series,
     estimate_svb_from_log,
     estimate_remaining_time,
-    compute_T_infty,
-    diagnose_t_infty
+    compute_T_infty
 )
 from utilities.runner import _parse_summary
 
@@ -162,27 +161,20 @@ def comprehensive_t_infty_debug(log_file: str, tau: float = 10.0):
         print(f"❌ T_infty calculation error: {e}")
         t_infty_result = {'error': str(e)}
 
-    # Diagnostic analysis
-    print_header("STEP 6: DIAGNOSTIC ANALYSIS")
+    # Summary analysis
+    print_header("STEP 6: SUMMARY ANALYSIS")
     try:
-        diagnostic = diagnose_t_infty(log_text, tau=tau, summary=summary)
-        print("✅ Diagnostic completed:")
+        print("✅ Analysis completed:")
+        print(f"  Progress rows: {len(rows)}")
+        print(f"  Valid data rows: {len(valid_data_rows)}")
+        print(f"  SVB samples: {svb_result.get('samples', 0)}")
+        print(f"  T_infty result: {t_infty_result.get('T_infty')}")
 
-        key_metrics = [
-            'progress_rows', 'raw_pairs_count', 'kept_pairs_count',
-            'left_nodes', 'G_used', 'theta', 'T_rem', 'T_infty'
-        ]
-
-        for key in key_metrics:
-            if key in diagnostic:
-                print(f"  {key}: {diagnostic[key]}")
-
-        # Show OLS details if available
-        if 'ols' in diagnostic:
-            print(f"  OLS: {diagnostic['ols']}")
+        if 'warning' in t_infty_result:
+            print(f"  Warning: {t_infty_result['warning']}")
 
     except Exception as e:
-        print(f"❌ Diagnostic error: {e}")
+        print(f"❌ Analysis error: {e}")
 
     # Root cause analysis
     print_header("🎯 ROOT CAUSE ANALYSIS")

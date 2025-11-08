@@ -17,9 +17,7 @@ from utilities.logs import (
     parse_progress_series,
     estimate_svb_from_log,
     estimate_remaining_time,
-    compute_T_infty,
-    diagnose_t_infty,
-    format_t_infty_diagnostic
+    compute_T_infty
 )
 from utilities.runner import _parse_summary
 
@@ -264,14 +262,18 @@ def debug_t_infty_calculation(log_path: str, tau: float = 10.0):
         else:
             print(f"  {key}: {value}")
 
-    # Detailed diagnostic
+    # Show final results
     print("\n" + "="*60)
-    print("STEP 7: COMPLETE DIAGNOSTIC")
+    print("STEP 7: FINAL RESULTS SUMMARY")
     print("="*60)
 
-    diagnostic = diagnose_t_infty(log_text, tau=tau, summary=summary)
-    formatted_diag = format_t_infty_diagnostic(diagnostic)
-    print(formatted_diag)
+    print("T_infty calculation completed successfully!")
+    print(f"Final T_infty: {t_infty_result.get('T_infty')}")
+    print(f"Solved: {t_infty_result.get('solved')}")
+    print(f"Gap: {t_infty_result.get('gap')}")
+    if 'warning' in t_infty_result:
+        print(f"Warning: {t_infty_result['warning']}")
+    print(f"Details keys: {list(t_infty_result.get('details', {}).keys())}")
 
     # Show raw pairs sample
     if pair_details:

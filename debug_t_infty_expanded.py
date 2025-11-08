@@ -19,8 +19,6 @@ from utilities.logs import (
     estimate_svb_from_log,
     estimate_remaining_time,
     compute_T_infty,
-    diagnose_t_infty,
-    format_t_infty_diagnostic,
     parse_scip_log_lines,
     shrink_scip_log_for_gpt,
     _normalize_col,
