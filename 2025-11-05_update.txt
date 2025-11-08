@@ -1,0 +1,96 @@
+SCIP-GPT-TUNER UPDATE — 2025-11-05
+
+Summary
+- Migrated repository to pure SCIP CLI (no PySCIPOpt).
+- Removed deprecated CLI flag and legacy PySCIPOpt code paths.
+- Added lightweight CLI-based feature extraction.
+- Added LLM-guided saturation stopping based on J_hat trajectory.
+- Improved multi-instance log aggregation with indices and combined digest for GPT.
+- Updated docs and packaging metadata to reflect CLI-only backend.
+- Removed all meta toggles (emphasis/presolving/separating/heuristics levels). The tuner now only applies explicit parameters via .set files. CLI scripts no longer issue any meta commands.
+
+Key Changes
+1) CLI-only backend
+   - Added utils for invoking scip and reading defaults/version:
+     * scip_gpt_tuner/utils/scip_cli.py (run_scip_script, scip_version, ensure_version, get_default_params, extract_basic_features)
+   - Version check now uses CLI: scip_gpt_tuner/utils/version_check.py
+   - Pipeline enforces CLI version at run start: scip_gpt_tuner/pipeline/solvermind.py:63
+
+2) Remove PySCIPOpt and legacy paths
+   - Deleted files:
+     * scip_gpt_tuner/features/extract_static_features.py
+     * scip_gpt_tuner/run/run_instance.py
+     * scip_gpt_tuner/utils/make_solver.py
+     * scip_gpt_tuner/params/validate_and_apply.py
+     * scip_gpt_tuner/loop/tune_loop.py
+   - Removed all imports/references to pyscipopt.
+
+3) Remove deprecated flag
+   - Removed --use-scip-cli flag and related plumbing:
+     * scip_gpt_tuner/__main__.py (flag removed; always CLI)
+     * scip_gpt_tuner/loop/tune_batch.py (no use_cli param)
+     * scip_gpt_tuner/pipeline/solvermind.py (always run_batch_cli)
+
+4) Lightweight features via CLI
+   - Added extract_basic_features() parsing original/presolved counts from scip stdout: scip_gpt_tuner/utils/scip_cli.py
+   - Batch collection wired:
+     * scip_gpt_tuner/components/features_batch.py (uses extract_basic_features, skips in dry-run)
+   - Pipeline uses features (or empty in dry-run): scip_gpt_tuner/pipeline/solvermind.py:71-73
+
+5) LLM-guided saturation stopping
+   - New prompt builder for early-stop decision:
+     * scip_gpt_tuner/gpt/build_saturation_prompt.py
+   - Generic JSON caller:
+     * scip_gpt_tuner/gpt/call_gpt.py (call_gpt_json)
+   - Pipeline integration (writes prompts/responses to gpt_reasoning.log):
+     * scip_gpt_tuner/pipeline/solvermind.py:146-162, 206-215, 231-241
+
+6) Multi-instance log aggregation for GPT
+   - Per-trial history now contains:
+     * log_snippets: {instance_name -> snippet}
+     * log_snippets_indexed: [{index, instance, snippet}, ...]
+     * combined_log_digest: labeled concatenation per instance order
+   - Implementation: scip_gpt_tuner/pipeline/solvermind.py:179-205
+
+7) Prompt improvements
+   - Emphasize distribution-level objective (J_hat) and batch focus.
+   - Include indexed logs and batch digest; add guidance to cite indices and avoid defaults.
+   - Removed any mention of meta settings; prompt schema now only expects {params, reasons}.
+   - File: scip_gpt_tuner/gpt/build_tuning_prompt.py
+
+8) Docs & packaging
+   - README updated for CLI-only usage; removed PySCIPOpt references and deprecated flags.
+   - Packaging metadata updated:
+     * scip_gpt_tuner.egg-info/requires.txt (removed pyscipopt)
+     * scip_gpt_tuner.egg-info/PKG-INFO (summary/content updated)
+     * scip_gpt_tuner.egg-info/SOURCES.txt (reflect current file set)
+
+Public Surface
+- scip_gpt_tuner/__init__.py exports tune_batch (CLI-first entry).
+- Console entry remains: scip-gpt-tuner -> scip_gpt_tuner.__main__:main
+
+Operational Notes
+- Ensure scip is available (PATH or SCIP_BIN env var). Required version enforced (default 9.2.4).
+- Features are minimal and fast; set presolve to True by default. For very large instances, we can add a flag to disable presolve in feature extraction.
+- Early stopping:
+  * LLM-guided saturation check uses early_stop_patience/early_stop_delta.
+  * Numeric early stop (geometric mean improvement) remains as a secondary criterion.
+- Log paths: All logs now live under per-instance log/ subfolders. Baseline is saved as scip_trial_0.log; subsequent trials use scip_trial_{k}.log.
+- Log filenames: Now prefixed with the instance name, e.g., <instance>_scip_trial_0.log, to simplify tracing.
+- Clean runs: Single and batch modes remove existing per-instance folders before starting to avoid artifact mixing.
+- Parameter files: All `params_trial_*.set` files are now written to a dedicated `param/` folder under the run outdir (e.g., `<outdir>/param/params_trial_3.set`). Baseline file lives at `<outdir>/param/params_trial_0.set`.
+- gpt_reasoning.log: Reformatted to be human-readable with concise summaries:
+  * Prompt summary shows instance names, whitelist size, constraints, J_hat tail, and a digest excerpt.
+  * Response summary lists proposed parameter changes and reasons.
+  * Saturation check logs show min_delta, patience, J_hat tail, and the LLM decision+reason.
+- Whitelist regimes: Added `--whitelist-regime {minimal,curated,full}` and implemented:
+  * full — all parameters discovered via CLI `set save`
+  * curated — mid-size list covering branching, node selection, cutting planes (global + families), presolve (global + per-presolver), primal heuristics (families), and tolerances
+  * minimal — focused subset per category (2–3 knobs)
+  Defaults exposed to LLM/logs are filtered to the current regime.
+  Thread policy: The whitelist excludes thread-related parameters (names with `/threads` or starting with `parallel/`), and guidance tells the LLM not to propose thread changes.
+
+Suggested Next Steps (optional)
+- Add a CLI flag to toggle presolve in feature extraction (e.g., --features-presolve off).
+- Expose a flag to cap log snippet size per instance.
+- Add parallel execution mode for run_batch_cli.

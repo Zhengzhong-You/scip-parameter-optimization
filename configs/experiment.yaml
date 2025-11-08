@@ -1,0 +1,23 @@
+data:
+  instances_dir: instance/cvrp/mps
+  pattern: "*.mps.gz"
+  train_fraction: 0.3
+  train_cap: 20
+  use_explicit_split: false
+
+runner:
+  tau: 600
+
+# Objective (R_hat): baselines will compute R_hat(p,q) relative to defaults.
+# No additional parameters are required.
+
+smac:
+  n_trials: 50
+  seed: 0
+
+rbfopt:
+  max_evaluations: 50
+  seed: 0
+
+logging:
+  out_dir: runs/baselines

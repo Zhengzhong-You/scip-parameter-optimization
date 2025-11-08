@@ -1,0 +1,12 @@
+- name: branching/scorefunc
+  type: cat
+  choices: [s, pscost, relpscost]
+- name: presolving/maxrounds
+  type: int
+  lower: 0
+  upper: 5
+- name: separating/maxroundsroot
+  type: int
+  lower: 0
+  upper: 10
+

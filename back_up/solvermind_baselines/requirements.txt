@@ -1,0 +1,7 @@
+numpy>=1.23
+pandas>=1.5
+tqdm>=4.66
+PyYAML>=6.0
+smac>=2.1
+ConfigSpace>=0.6.1
+rbfopt>=4.2.4

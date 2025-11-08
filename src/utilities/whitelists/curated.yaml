@@ -1,0 +1,32 @@
+- name: branching/scorefunc
+  type: cat
+  choices: [s, pscost, relpscost, distribution]
+- name: nodeselection/bestestimate/stdpriority
+  type: int
+  lower: -100000
+  upper: 100000
+- name: separating/maxroundsroot
+  type: int
+  lower: 0
+  upper: 20
+- name: separating/maxcutsroot
+  type: int
+  lower: 0
+  upper: 2000
+- name: presolving/maxrounds
+  type: int
+  lower: 0
+  upper: 10
+- name: presolving/abortfac
+  type: float
+  lower: 0.0
+  upper: 1.0
+- name: heuristics/feaspump/freq
+  type: int
+  lower: -1
+  upper: 100
+- name: heuristics/feaspump/maxlpiterquot
+  type: float
+  lower: 0.0
+  upper: 1.0
+
