@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
+import math
+from functools import lru_cache
 
 import yaml
 from .scip_cli import get_default_params
+from .scip_cli import run_scip_script
+import re
 
 
 def _curated_list() -> List[str]:
     params: List[str] = []
-    params += [
-        "limits/gap",
-        "limits/absgap",
-        "limits/nodes",
-        "limits/memory",
-        "limits/restarts",
-    ]
     params += [
         "branching/scorefunc",
         "branching/preferbinary",
@@ -24,7 +21,7 @@ def _curated_list() -> List[str]:
         "branching/relpscost/sbiterofs",
     ]
     params += [
-        "nodeselection/bestestimate/stdpriority",
+        "nodeselection/estimate/stdpriority",
         "nodeselection/dfs/stdpriority",
         "nodeselection/bfs/stdpriority",
         "nodeselection/childsel",
@@ -35,15 +32,21 @@ def _curated_list() -> List[str]:
         "separating/maxcuts",
         "separating/maxcutsroot",
     ]
-    for fam in ["gomory", "mir", "cmir", "flowcover", "clique", "knapsackcover", "oddcycle"]:
-        params += [f"separating/{fam}/freq", f"separating/{fam}/maxrounds", f"separating/{fam}/maxroundsroot"]
+    # Separator family knobs (SCIP 9.2.4): use frequencies per family per spec
+    params += [
+        "separating/gomory/freq",
+        "separating/cmir/freq",
+        "separating/flowcover/freq",
+        "separating/clique/freq",
+        "separating/knapsackcover/freq",
+        "separating/oddcycle/freq",
+    ]
     params += [
         "presolving/maxrounds",
         "presolving/maxrestarts",
         "presolving/abortfac",
     ]
-    for pres in ["probing", "aggregation", "boundshift", "dualfix", "implications", "trivial"]:
-        params.append(f"presolving/{pres}/maxrounds")
+    # Per-presolver maxrounds are not exposed uniformly in 9.2.x; keep only global knobs above.
     params += [
         "heuristics/feaspump/freq",
         "heuristics/feaspump/freqofs",
@@ -75,7 +78,7 @@ def _curated_list() -> List[str]:
 def _minimal_list() -> List[str]:
     params: List[str] = []
     params += ["branching/scorefunc"]
-    params += ["nodeselection/bestestimate/stdpriority", "nodeselection/dfs/stdpriority"]
+    params += ["nodeselection/estimate/stdpriority", "nodeselection/dfs/stdpriority"]
     params += ["separating/maxroundsroot", "separating/maxcutsroot"]
     params += ["presolving/maxrounds", "presolving/abortfac"]
     params += ["heuristics/feaspump/freq", "heuristics/feaspump/maxlpiterquot"]
@@ -106,3 +109,299 @@ def load_yaml_whitelist(path: str) -> List[Dict[str, Any]]:
         data = yaml.safe_load(f) or []
     return data
 
+
+# -------------------------------
+# Typed whitelist from SCIP (9.2.4)
+# -------------------------------
+
+# === PATCH 1: More robust regex patterns and help text caching ===
+# Allow () or [], and recognize ±inf/infty/infinity
+_RANGE_RE = re.compile(
+    r"""[\[\(]\s*
+        (?P<lo>[+\-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+\-]?\d+)?|[+\-]?(?:inf|infty|infinity))
+        \s*,\s*
+        (?P<hi>[+\-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+\-]?\d+)?|[+\-]?(?:inf|infty|infinity))
+        \s*[\]\)]
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+_INT_PAT = re.compile(r"^[+-]?\d+$")
+_TYPE_HINTS = (
+    (re.compile(r"\bbool\b", re.I), "bool"),
+    (re.compile(r"\breal\b|\bfloat\b", re.I), "float"),
+    (re.compile(r"\binteger\b|\bint\b|\blongint\b", re.I), "int"),
+    (re.compile(r"\bchar\b", re.I), "char"),
+)
+
+_CHOICES_BLOCK_RE = re.compile(r"\{([^}]*)\}")  # More permissive, then parse tokens
+_TOKEN_IN_BRACES_RE = re.compile(r"'([^']+)'|\"([^\"]+)\"|([A-Za-z0-9_.:/+\-\|]+)")
+
+def _to_float(s: str) -> float:
+    s = s.strip().lower()
+    if s in {"+inf", "inf", "infty", "infinity"}:
+        return math.inf
+    if s in {"-inf", "-infty", "-infinity"}:
+        return -math.inf
+    return float(s)
+
+def _extract_range(text: str) -> tuple[float | None, float | None]:
+    m = _RANGE_RE.search(text or "")
+    if not m:
+        return None, None
+    lo_s, hi_s = m.group("lo"), m.group("hi")
+    try:
+        return _to_float(lo_s), _to_float(hi_s)
+    except Exception:
+        return None, None
+
+@lru_cache(maxsize=None)
+def _scip_help_text(name: str) -> str:
+    rc, out = run_scip_script([f"set help {name}", "quit"])
+    if rc == 0 and out:
+        return out
+    # Fallback: some environments prefer `help set <name>`
+    rc2, out2 = run_scip_script([f"help set {name}", "quit"])
+    return out2 or (out or "")
+
+
+# === PATCH 2: Use help text to prioritize type/domain inference ===
+def _infer_param_info_from_help(text: str) -> Tuple[str | None, Dict[str, Any]]:
+    """From 'set help <name>' output, parse type & domain."""
+    if not text:
+        return None, {}
+
+    t_hint: str | None = None
+    for rx, t in _TYPE_HINTS:
+        if rx.search(text):
+            t_hint = t
+            break
+
+    # First try range
+    lo, hi = _extract_range(text)
+    if lo is not None or hi is not None:
+        # Type decision: has explicit float/real hint then float; otherwise if boundaries are integers/infinite and has int hint then int
+        if t_hint == "float":
+            return "float", {"lower": lo, "upper": hi}
+        if t_hint == "int":
+            return "int", {"lower": lo if lo in (-math.inf, math.inf) else int(lo),
+                           "upper": hi if hi in (-math.inf, math.inf) else int(hi)}
+        # No hint: if both ends (when finite) are integers, then int, otherwise float
+        def _is_intlike(x: float) -> bool:
+            return (x in (-math.inf, math.inf)) or float(int(x)) == float(x)
+        if (lo is None or _is_intlike(lo)) and (hi is None or _is_intlike(hi)):
+            return "int", {"lower": lo if lo in (-math.inf, math.inf) else (None if lo is None else int(lo)),
+                           "upper": hi if hi in (-math.inf, math.inf) else (None if hi is None else int(hi))}
+        return "float", {"lower": lo, "upper": hi}
+
+    # Then try choices (braces with quoted or bare tokens)
+    mset = _CHOICES_BLOCK_RE.search(text)
+    if mset:
+        raw = mset.group(1)
+        toks = []
+        for g1, g2, g3 in _TOKEN_IN_BRACES_RE.findall(raw):
+            tok = g1 or g2 or g3
+            if tok:
+                toks.append(tok.strip())
+        low = [t.lower() for t in toks]
+        if set(low) <= {"true", "false"} or (t_hint == "bool"):
+            return "bool", {"choices": [False, True]}
+        # char type: all choices are single characters
+        if all(len(t) == 1 for t in toks) or t_hint == "char":
+            return "cat", {"choices": toks}
+        return "cat", {"choices": toks}
+
+    # No range or choices: return type hint only (fallback to _set probing later)
+    if t_hint in {"bool", "float", "int", "char"}:
+        return t_hint if t_hint != "char" else "cat", {}
+
+    return None, {}
+
+
+# === PATCH 3: Priority: help first, fallback to 'set' probing with infinity handling ===
+def _scip_param_typed(name: str) -> Dict[str, Any] | None:
+    def _set(val: str) -> Tuple[bool, str]:
+        import tempfile, os as _os
+        with tempfile.NamedTemporaryFile("w", suffix=".set", delete=False) as tf:
+            tf.write(f"{name} = {val}\n")
+            tf.flush()
+            set_path = tf.name
+        rc, out = run_scip_script([f"set load {set_path}", "quit"])
+        try:
+            _os.unlink(set_path)
+        except Exception:
+            pass
+        ok = (rc == 0) and ("ERROR" not in (out or ""))
+        return ok, (out or "")
+
+    defaults = {}
+    try:
+        defaults = get_default_params()
+        dval = defaults.get(name, None)
+    except Exception:
+        dval = None
+
+    # 1) First see help text
+    help_txt = _scip_help_text(name)
+    t0, meta0 = _infer_param_info_from_help(help_txt)
+    if t0 == "bool":
+        return {"name": name, "type": "bool", "choices": [False, True]}
+    if t0 == "cat" and meta0.get("choices"):
+        # Verify first choice is settable
+        first = str(meta0["choices"][0])
+        ok, _ = _set(first)
+        if ok:
+            return {"name": name, "type": "cat", "choices": meta0["choices"]}
+    if t0 in {"int", "float"} and ("lower" in meta0 or "upper" in meta0):
+        lo = meta0.get("lower", -math.inf)
+        hi = meta0.get("upper", math.inf)
+        # Don't force finite; allow ±inf
+        if t0 == "int":
+            lo_i = None if lo in (-math.inf, math.inf, None) else int(lo)
+            hi_i = None if hi in (-math.inf, math.inf, None) else int(hi)
+            return {"name": name, "type": "int", "lower": lo_i if lo_i is not None else -2**31,
+                    "upper": hi_i if hi_i is not None else 2**31-1}
+        else:
+            return {"name": name, "type": "float",
+                    "lower": float(lo) if lo is not None else -math.inf,
+                    "upper": float(hi) if hi is not None else math.inf}
+
+    # 2) Fallback: judge type by default value first
+    if isinstance(dval, bool):
+        return {"name": name, "type": "bool", "choices": [False, True]}
+    if isinstance(dval, str) and len(dval) == 1:
+        # Try to trigger "valid set" hint via invalid value
+        ok_inv, out = _set("!")
+        mset = _CHOICES_BLOCK_RE.search(out or "")
+        if mset:
+            raw = mset.group(1)
+            toks = []
+            for g1, g2, g3 in _TOKEN_IN_BRACES_RE.findall(raw):
+                tok = g1 or g2 or g3
+                if tok:
+                    toks.append(tok.strip())
+            choices = toks if len(toks) > 1 else list(toks[0]) if toks else [dval]
+            ok_first, _ = _set(str(choices[0]))
+            if ok_first:
+                return {"name": name, "type": "cat", "choices": choices}
+
+    # 3) Numeric: test 0.5 to determine float, otherwise int; then use extreme values to extract ranges from error
+    is_float = False
+    ok_half, _ = _set("0.5")
+    if ok_half:
+        is_float = True
+    else:
+        ok_one, _ = _set("1")
+        if ok_one:
+            is_float = False
+        else:
+            # Try help text type hints last time
+            if t0 == "float": is_float = True
+            elif t0 == "int": is_float = False
+            else:
+                return None
+
+    # Try using exception info to mine ranges (allow infinite boundaries)
+    _, out_lo = _set("-1e308" if is_float else "-999999999")
+    lo, hi = _extract_range(out_lo)
+    _, out_hi = _set("1e308" if is_float else "999999999")
+    lo2, hi2 = _extract_range(out_hi)
+    if lo is None and lo2 is not None:
+        lo = lo2
+    if hi is None and hi2 is not None:
+        hi = hi2
+
+    if is_float:
+        return {"name": name, "type": "float",
+                "lower": float(lo) if lo is not None else -math.inf,
+                "upper": float(hi) if hi is not None else math.inf}
+    else:
+        lo_i = None if lo is None or lo in (-math.inf, math.inf) else int(lo)
+        hi_i = None if hi is None or hi in (-math.inf, math.inf) else int(hi)
+        return {"name": name, "type": "int",
+                "lower": lo_i if lo_i is not None else -2**31,
+                "upper": hi_i if hi_i is not None else 2**31-1}
+
+
+def get_typed_whitelist(regime: str = "curated") -> List[Dict[str, Any]]:
+    """Build a typed whitelist by querying SCIP for each whitelisted name.
+
+    - Ensures all parameters exist and domains are accepted by SCIP 9.2.4
+    - Uses help output and set-load probes; no heuristic fallbacks
+    - Validates by creating a temporary .set using safe/default values and loading it
+    """
+    names = get_whitelist(regime=regime).get("params", [])
+    typed: List[Dict[str, Any]] = []
+    failures: List[str] = []
+    for nm in names:
+        info = _scip_param_typed(nm)
+        if info is None:
+            failures.append(nm)
+            continue
+        typed.append(info)
+
+    # Validate by loading a .set with safe/default values
+    defaults = {}
+    try:
+        defaults = get_default_params()
+    except Exception:
+        defaults = {}
+
+    # === PATCH 4: Validation stage prioritizes defaults, safe values for infinite bounds ===
+    def _safe_value(it: Dict[str, Any]) -> str:
+        name = it["name"]
+        # 1) Priority: default value (most stable)
+        if name in defaults and defaults[name] is not None:
+            dv = defaults[name]
+            if isinstance(dv, bool):
+                return "true" if dv else "false"
+            return str(dv)
+
+        t = it.get("type")
+        if t == "cat":
+            return str((it.get("choices") or [""])[0])
+        if t == "bool":
+            return "false"
+        if t == "int":
+            lo = it.get("lower", -2**31); hi = it.get("upper", 2**31-1)
+            lo = -2**31 if lo is None else int(lo)
+            hi =  2**31-1 if hi is None else int(hi)
+            cand = 0
+            if cand < lo: cand = lo
+            if cand > hi: cand = hi
+            return str(cand)
+        if t == "float":
+            lo = it.get("lower", -math.inf); hi = it.get("upper", math.inf)
+            # Choose 0.0, if clipped outside then clamp to boundary; infinite bounds are OK
+            cand = 0.0
+            if (lo is not None) and math.isfinite(lo) and cand < lo:
+                cand = lo
+            if (hi is not None) and math.isfinite(hi) and cand > hi:
+                cand = hi
+            return f"{float(cand):.12g}"
+        return ""
+
+    import tempfile, os as _os
+    with tempfile.NamedTemporaryFile("w", suffix=".set", delete=False) as tf:
+        for it in typed:
+            sv = _safe_value(it)
+            if not sv:
+                continue
+            tf.write(f"{it['name']} = {sv}\n")
+        tf.flush()
+        set_path = tf.name
+    rc, out = run_scip_script([f"set load {set_path}", "quit"])
+    try:
+        _os.unlink(set_path)
+    except Exception:
+        pass
+    if rc != 0 or (out and "ERROR" in out):
+        bad: List[str] = []
+        for line in (out or "").splitlines():
+            m = re.search(r"parameter <([^>]+)>", line)
+            if m:
+                bad.append(m.group(1))
+        raise RuntimeError(f"Typed whitelist validation failed; offending params: {bad or 'unknown'}. Raw:\n{(out or '')}")
+    if failures:
+        raise RuntimeError(f"Failed to infer type/domain for parameters: {failures}. Check SCIP 9.2.4 installation or whitelist names.")
+    return typed
