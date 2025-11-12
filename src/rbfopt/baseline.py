@@ -34,6 +34,7 @@ rbfopt = _import_third_party_rbfopt()
 
 from utilities.logs import per_instance_T_infty
 from utilities.scoring import r_hat_ratio
+from utilities.est_time import diagnose_t_infty, format_t_infty_diagnostic
 
 
 def run_rbfopt(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str], tau: float,
@@ -42,17 +43,17 @@ def run_rbfopt(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str],
                ) -> Tuple[Dict[str, Any], float, pd.DataFrame, Dict[str, float]]:
     # Build RBFOpt variable space
     dim = len(whitelist)
-    var_lower = []; var_upper = []; var_type = ""; types = []; name_list = []; cat_maps = []
+    var_lower = []; var_upper = []; var_type = []; types = []; name_list = []; cat_maps = []
     for item in whitelist:
         name_list.append(item["name"]); t = item["type"]; types.append(t)
-        if t == "float": var_lower.append(float(item["lower"])); var_upper.append(float(item["upper"])); var_type += "R"; cat_maps.append(None)
-        elif t == "int": var_lower.append(int(item["lower"])); var_upper.append(int(item["upper"])); var_type += "I"; cat_maps.append(None)
-        elif t == "bool": var_lower.append(0); var_upper.append(1); var_type += "I"; cat_maps.append(("__bool__", [False, True]))
-        elif t == "cat": choices = list(item["choices"]); var_lower.append(0); var_upper.append(len(choices)-1); var_type += "I"; cat_maps.append((name_list[-1], choices))
+        if t == "float": var_lower.append(float(item["lower"])); var_upper.append(float(item["upper"])); var_type.append('R'); cat_maps.append(None)
+        elif t == "int": var_lower.append(int(item["lower"])); var_upper.append(int(item["upper"])); var_type.append('I'); cat_maps.append(None)
+        elif t == "bool": var_lower.append(0); var_upper.append(1); var_type.append('I'); cat_maps.append(("__bool__", [False, True]))
+        elif t == "cat": choices = list(item["choices"]); var_lower.append(0); var_upper.append(len(choices)-1); var_type.append('I'); cat_maps.append((name_list[-1], choices))
         else: raise ValueError(f"Unknown type {t}")
 
     class BB(rbfopt.RbfoptUserBlackBox):
-        def __init__(self): super().__init__(dim, var_lower, var_upper, var_type)
+        def __init__(self): super().__init__(dim, var_lower, var_upper, var_type, self.evaluate)
         def _decode(self, x):
             d = {}
             for idx, v in enumerate(x):
