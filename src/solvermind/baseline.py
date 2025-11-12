@@ -42,7 +42,7 @@ def run_solvermind(whitelist: List[Dict[str, Any]], instances: List[str], runner
     solvermind_config = {
         "max_trials": n_trials,
         "max_edits": 3,  # Default for SolverMind
-        "gpt_model": "gpt-4",  # Default model
+        "gpt_model": "gpt-5",  # Default model
         "early_stop_patience": 3,
         "early_stop_delta": 0.01,
         "whitelist_regime": "curated"  # Use curated parameters

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from typing import Dict, Any, List
 
 from utilities.whitelist import get_whitelist
@@ -82,6 +83,7 @@ def run_tuning(
     import time as time_module
     gpt_log.write(f"# Time: {time_module.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
+
     trials_csv = os.path.join(outdir, "batch_trials.csv")
     per_inst_csv = os.path.join(outdir, "per_instance_metrics.csv")
 
@@ -134,15 +136,102 @@ def run_tuning(
     history_data[0]["param_file"] = ""
     history_data[0]["tau"] = time_limit
 
+    # Write baseline summary to main log
+    try:
+        gpt_log.write("=== BASELINE (Trial 0) ===\n")
+        gpt_log.write('"""""""""""""""""\n')
+        gpt_log.write("CONFIGURATION:\n")
+        gpt_log.write("Parameters: Default SCIP settings\n")
+        gpt_log.write(f"\nRESULTS:\n")
+        gpt_log.write(f"R_hat: {r0:.6f} (baseline)\n")
+        gpt_log.write(f"Solve Time: {summ0.get('gm_time', 0):.2f}s\n")
+        gpt_log.write(f"Nodes: {summ0.get('gm_nodes', 0):.0f}\n")
+        gpt_log.write(f"Solved: {summ0.get('solved_pct', 0):.1f}%\n\n")
+        gpt_log.flush()
+    except Exception:
+        pass
+
     for trial_idx in range(1, int(max_trials) + 1):
         prompt = build_prompt(features_batch=feats, history=history_data, whitelist=whitelist, max_changes=max_edits)
         gpt_log.write(f"=== TRIAL {trial_idx} ===\n")
-        gpt_log.write("LLM INPUT SUPPRESSED (JSON)\n\n")
+        gpt_log.write('"""""""""""""""""\n')
+        gpt_log.write("LLM INPUT:\n")
+
+        # Convert JSON prompt to human-readable format
+        def format_prompt_readable(prompt_data):
+            result = ""
+            for message in prompt_data:
+                role = message.get("role", "")
+                content = message.get("content", "")
+
+                if role == "system":
+                    result += "SYSTEM INSTRUCTIONS:\n"
+                    result += content + "\n\n"
+                elif role == "user":
+                    # Parse the user content JSON
+                    try:
+                        user_data = json.loads(content)
+                        result += "USER REQUEST:\n"
+                        result += f"Task: {user_data.get('task', '')}\n"
+
+                        # Features
+                        if 'features' in user_data and 'batch' in user_data['features']:
+                            result += f"Problem instances:\n"
+                            for inst in user_data['features']['batch']:
+                                result += f"  • {inst.get('instance', '')}: {inst.get('features', {}).get('nvars', '')} variables, {inst.get('features', {}).get('nconss', '')} constraints\n"
+
+                        # Whitelist
+                        if 'reinforced_whitelist' in user_data:
+                            wl = user_data['reinforced_whitelist']
+                            result += f"Parameter whitelist ({wl.get('regime', '')}): {len(wl.get('params', []))} parameters available\n"
+
+                        # Trial history
+                        if 'trial_history' in user_data:
+                            result += f"Previous trials:\n"
+                            for trial in user_data['trial_history']:
+                                trial_num = trial.get('trial', '')
+                                params = trial.get('params', {})
+                                r_hat = trial.get('r_hat', '')
+                                result += f"  Trial {trial_num}: R_hat={r_hat:.6f}, {len(params)} parameter(s) changed\n"
+                                if params:
+                                    for k, v in params.items():
+                                        result += f"    • {k} = {v}\n"
+                                if trial.get('reasons'):
+                                    result += f"    Reasoning: {trial['reasons']}\n"
+
+                                # Add SCIP logs for this trial
+                                if 'scip_logs_indexed' in trial:
+                                    result += f"    SCIP solver logs:\n"
+                                    for log_entry in trial.get('scip_logs_indexed', []):
+                                        instance = log_entry.get('instance', '')
+                                        snippet = log_entry.get('snippet', '')
+                                        result += f"    [Instance: {instance}]\n"
+                                        # Indent each line of the log snippet
+                                        for line in snippet.split('\n'):
+                                            if line.strip():
+                                                result += f"    {line}\n"
+                                        result += f"\n"
+
+                        result += "\n"
+                    except:
+                        result += content + "\n\n"
+            return result
+
+        gpt_log.write(format_prompt_readable(prompt))
 
         from .gpt.call_gpt import call_gpt
         gpt_reply = call_gpt(prompt, model=gpt_model)
         params = gpt_reply.get("params", {}) or {}
         reasons = gpt_reply.get("reasons", "")
+
+        gpt_log.write("LLM OUTPUT:\n")
+        gpt_log.write("Proposed parameters:\n")
+        if params:
+            for param_name, param_value in params.items():
+                gpt_log.write(f"  • {param_name} = {param_value}\n")
+        else:
+            gpt_log.write("  (no parameters proposed)\n")
+        gpt_log.write(f"\nReasoning:\n{reasons}\n\n")
 
         applied, rejected = validator.validate(params=params, max_edits=max_edits)
 
@@ -169,9 +258,27 @@ def run_tuning(
         rhat = r_hat_ratio(tinf_p, tinf_base, cap=1e3)
         summary = _aggregate_summary(per_m)
 
-        # Write concise metric line to GPT reasoning log
+        # Write validation and results in human-readable format
         try:
-            gpt_log.write(f"R_HAT: {rhat:.6f}\n\n")
+            gpt_log.write("VALIDATION:\n")
+            if applied:
+                gpt_log.write("Applied parameters:\n")
+                for param_name, param_value in applied.items():
+                    default_val = defaults.get(param_name, "unknown")
+                    gpt_log.write(f"  • {param_name}: {default_val} → {param_value}\n")
+            else:
+                gpt_log.write("No parameters applied (using defaults)\n")
+
+            if rejected:
+                gpt_log.write("Rejected parameters:\n")
+                for param_name, param_value in rejected.items():
+                    gpt_log.write(f"  • {param_name} = {param_value} (rejected)\n")
+
+            gpt_log.write(f"\nEVALUATION RESULTS:\n")
+            gpt_log.write(f"R_hat: {rhat:.6f}\n")
+            gpt_log.write(f"Solve Time: {summary.get('gm_time', 0):.2f}s\n")
+            gpt_log.write(f"Nodes: {summary.get('gm_nodes', 0):.0f}\n")
+            gpt_log.write(f"Solved: {summary.get('solved_pct', 0):.1f}%\n\n")
         except Exception:
             pass
 
@@ -227,7 +334,25 @@ def run_tuning(
                 "param_file": param_file,
             }
 
-    gpt_log.write("=== TUNING SESSION COMPLETED ===\n"); gpt_log.close()
+    # Write final summary in human-readable format
+    try:
+        gpt_log.write("=" * 50 + "\n")
+        gpt_log.write("TUNING SESSION COMPLETED\n")
+        gpt_log.write("=" * 50 + "\n")
+        gpt_log.write(f"Best trial: {incumbent['trial']}\n")
+        gpt_log.write(f"Best R_hat: {incumbent['r_hat']:.6f}\n")
+        if incumbent['params']:
+            gpt_log.write("Best parameters:\n")
+            for param, value in incumbent['params'].items():
+                default_val = defaults.get(param, "unknown")
+                gpt_log.write(f"  • {param}: {default_val} → {value}\n")
+        else:
+            gpt_log.write("Best configuration: default parameters\n")
+        gpt_log.write(f"Total trials completed: {last_trial}\n")
+    except Exception:
+        pass
+
+    gpt_log.close()
 
     return {
         "trials_csv": trials_csv,
