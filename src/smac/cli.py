@@ -1,6 +1,6 @@
 import argparse, json, os, yaml
-from utilities.datasets import discover_instances, train_test_split_by_fraction
-from utilities.whitelist import load_yaml_whitelist
+from utilities.datasets import discover_instances
+from utilities.whitelist import get_typed_whitelist
 from utilities.runner import run_instance as scip_run
 from utilities.logs import per_instance_T_infty
 from .baseline import run_smac
@@ -9,18 +9,22 @@ from .baseline import run_smac
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
-    ap.add_argument("--whitelist", required=True)
+    ap.add_argument("--whitelist", required=True, help="Whitelist regime: curated|minimal|full")
     args = ap.parse_args()
 
     cfg = yaml.safe_load(open(args.config, "r"))
-    wl = load_yaml_whitelist(args.whitelist)
+    # Build typed whitelist directly from the programmatic curated list to keep all methods in sync
+    regime = (args.whitelist or "curated").strip().lower()
+    if regime not in ("curated", "minimal", "full"):
+        raise SystemExit(f"Unsupported whitelist regime: {regime}")
+    wl = get_typed_whitelist(regime=regime)
 
     data = cfg["data"]
+    # Use the full set of discovered instances for tuning (no train/test split)
     if data.get("use_explicit_split", False):
-        train = data.get("train", [])
+        instances = data.get("train", [])
     else:
-        files = discover_instances(data["instances_dir"], data["pattern"])
-        train, _ = train_test_split_by_fraction(files, data.get("train_fraction", 0.3), data.get("train_cap", 20))
+        instances = discover_instances(data["instances_dir"], data["pattern"])
 
     tau = float(cfg["runner"]["tau"])
     out_dir = cfg["logging"]["out_dir"]
@@ -32,9 +36,9 @@ def main():
         outdir_i = os.path.join(out_dir, name)
         return scip_run(instance, params=pcfg, time_limit=tau_, outdir=outdir_i)
 
-    # Precompute baseline T_infty for defaults on train
+    # Precompute baseline T_infty for defaults on the target instances
     per_base = {}
-    for pth in train:
+    for pth in instances:
         nm = os.path.splitext(os.path.basename(pth))[0]
         outdir_i = os.path.join(out_dir, nm)
         per_base[nm] = scip_run(pth, params={}, time_limit=tau, outdir=outdir_i, trial_id=0)
@@ -43,7 +47,7 @@ def main():
     best_cfg, best_Rhat, _trials, _tinf = run_smac(
         whitelist=wl,
         runner_fn=runner_fn,
-        instances=train,
+        instances=instances,
         tau=tau,
         tinf_base=tinf_base,
         n_trials=cfg["smac"]["n_trials"],

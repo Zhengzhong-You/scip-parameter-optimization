@@ -33,9 +33,10 @@ def train_test_split(paths: List[str], L: int | None = None) -> Tuple[List[str],
 def train_test_split_by_fraction(paths: List[str], train_fraction: float, train_cap: int) -> Tuple[List[str], List[str]]:
     n = len(paths)
     n_train = min(int(n * float(train_fraction) + 1e-9), int(train_cap))
+    if n > 0 and n_train == 0:
+        n_train = 1
     return paths[:n_train], paths[n_train:]
 
 
 def discover_instances(instances_dir: str, pattern: str) -> list:
     return sorted(glob.glob(os.path.join(instances_dir, pattern)))
-

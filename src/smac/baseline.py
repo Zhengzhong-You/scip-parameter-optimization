@@ -4,7 +4,29 @@ import pandas as pd
 from pathlib import Path
 
 import ConfigSpace as CS
-from smac import HyperparameterOptimizationFacade, Scenario
+import importlib, sys, os, site
+
+def _import_third_party_smac():
+    """Import the pip-installed 'smac' by temporarily removing this project's 'src/smac' shadow package."""
+    repo_pkg_dir = os.path.abspath(os.path.dirname(__file__))  # .../src/smac
+    repo_src = os.path.abspath(os.path.join(repo_pkg_dir, '..'))
+    orig_path = list(sys.path)
+    try:
+        # Remove src from path to avoid shadowing
+        try:
+            sys.path.remove(repo_src)
+        except ValueError:
+            pass
+        # Remove local package binding if present
+        if 'smac' in sys.modules:
+            del sys.modules['smac']
+        return importlib.import_module('smac')
+    finally:
+        sys.path[:] = orig_path
+
+_smac = _import_third_party_smac()
+HyperparameterOptimizationFacade = _smac.HyperparameterOptimizationFacade
+Scenario = _smac.Scenario
 
 from utilities.logs import per_instance_T_infty
 from utilities.scoring import r_hat_ratio

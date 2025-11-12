@@ -71,7 +71,7 @@ def _curated_list() -> List[str]:
         "heuristics/rens/minfixingrate",
         "heuristics/rens/startsol",
     ]
-    params += ["numerics/feastol", "numerics/epsilon", "numerics/dualfeastol"]
+    # params += ["numerics/feastol", "numerics/epsilon", "numerics/dualfeastol"]
     return params
 
 
@@ -285,42 +285,104 @@ def _scip_param_typed(name: str) -> Dict[str, Any] | None:
             if ok_first:
                 return {"name": name, "type": "cat", "choices": choices}
 
-    # 3) Numeric: test 0.5 to determine float, otherwise int; then use extreme values to extract ranges from error
-    is_float = False
-    ok_half, _ = _set("0.5")
-    if ok_half:
-        is_float = True
-    else:
-        ok_one, _ = _set("1")
-        if ok_one:
-            is_float = False
-        else:
-            # Try help text type hints last time
-            if t0 == "float": is_float = True
-            elif t0 == "int": is_float = False
-            else:
-                return None
+    # 3) Robust probing: force an error and parse the range from the error text.
+    #    We do not require deciding float/int upfront; instead we detect from error text or from integer-likeness of bounds.
+    def _probe_range_and_kind() -> Tuple[float | None, float | None, str | None, str]:
+        # Try two probes: extreme float and extreme int; merge any extracted ranges
+        rc_kind = None
+        lo = hi = None
+        # first: float extremes
+        ok, out = _set("-1e308")
+        if out:
+            l1, h1 = _extract_range(out)
+            if l1 is not None or h1 is not None:
+                lo = l1 if lo is None else lo
+                hi = h1 if hi is None else hi
+            if re.search(r"\b(longint|integer|int) parameter\b", out, re.I):
+                rc_kind = "int"
+            elif re.search(r"\b(real|float) parameter\b", out, re.I):
+                rc_kind = "float"
+        ok, out = _set("1e308")
+        if out:
+            l2, h2 = _extract_range(out)
+            if lo is None and l2 is not None:
+                lo = l2
+            if hi is None and h2 is not None:
+                hi = h2
+            if rc_kind is None:
+                if re.search(r"\b(longint|integer|int) parameter\b", out, re.I):
+                    rc_kind = "int"
+                elif re.search(r"\b(real|float) parameter\b", out, re.I):
+                    rc_kind = "float"
+        # second: int extremes
+        ok, out = _set("-999999999")
+        if out:
+            l3, h3 = _extract_range(out)
+            if lo is None and l3 is not None:
+                lo = l3
+            if hi is None and h3 is not None:
+                hi = h3
+            if rc_kind is None:
+                if re.search(r"\b(longint|integer|int) parameter\b", out, re.I):
+                    rc_kind = "int"
+                elif re.search(r"\b(real|float) parameter\b", out, re.I):
+                    rc_kind = "float"
+        ok, out = _set("999999999")
+        if out:
+            l4, h4 = _extract_range(out)
+            if lo is None and l4 is not None:
+                lo = l4
+            if hi is None and h4 is not None:
+                hi = h4
+            if rc_kind is None:
+                if re.search(r"\b(longint|integer|int) parameter\b", out, re.I):
+                    rc_kind = "int"
+                elif re.search(r"\b(real|float) parameter\b", out, re.I):
+                    rc_kind = "float"
+        return lo, hi, rc_kind, out or ""
 
-    # Try using exception info to mine ranges (allow infinite boundaries)
-    _, out_lo = _set("-1e308" if is_float else "-999999999")
-    lo, hi = _extract_range(out_lo)
-    _, out_hi = _set("1e308" if is_float else "999999999")
-    lo2, hi2 = _extract_range(out_hi)
-    if lo is None and lo2 is not None:
-        lo = lo2
-    if hi is None and hi2 is not None:
-        hi = hi2
+    lo, hi, kind, last_out = _probe_range_and_kind()
+    if lo is None and hi is None:
+        # Try to infer categorical choices as last resort
+        ok_inv, out = _set("!")
+        mset = _CHOICES_BLOCK_RE.search(out or "")
+        if mset:
+            raw = mset.group(1)
+            toks = []
+            for g1, g2, g3 in _TOKEN_IN_BRACES_RE.findall(raw):
+                tok = g1 or g2 or g3
+                if tok:
+                    toks.append(tok.strip())
+            if toks:
+                ok_first, _ = _set(str(toks[0]))
+                if ok_first:
+                    return {"name": name, "type": "cat", "choices": toks}
+        # As requested, treat lack of domain as a hard error
+        return None
 
-    if is_float:
-        return {"name": name, "type": "float",
-                "lower": float(lo) if lo is not None else -math.inf,
-                "upper": float(hi) if hi is not None else math.inf}
-    else:
+    # Decide numeric type
+    if kind is None:
+        # Use hint from help if available
+        kind = t0
+        if kind not in ("int", "float"):
+            # Decide by int-likeness of finite bounds
+            def _is_intlike(x):
+                return x is None or (x in (-math.inf, math.inf)) or float(int(x)) == float(x)
+            kind = "int" if _is_intlike(lo) and _is_intlike(hi) else "float"
+
+    if kind == "int":
         lo_i = None if lo is None or lo in (-math.inf, math.inf) else int(lo)
         hi_i = None if hi is None or hi in (-math.inf, math.inf) else int(hi)
+        # Guard against float round-up on very large bounds; clamp to signed 64-bit max
+        if hi_i is not None and hi_i > (2**63 - 1):
+            hi_i = 2**63 - 1
         return {"name": name, "type": "int",
                 "lower": lo_i if lo_i is not None else -2**31,
                 "upper": hi_i if hi_i is not None else 2**31-1}
+    else:
+        return {"name": name, "type": "float",
+                "lower": float(lo) if lo is not None else -math.inf,
+                "upper": float(hi) if hi is not None else math.inf}
 
 
 def get_typed_whitelist(regime: str = "curated") -> List[Dict[str, Any]]:
@@ -339,6 +401,35 @@ def get_typed_whitelist(regime: str = "curated") -> List[Dict[str, Any]]:
             failures.append(nm)
             continue
         typed.append(info)
+
+    # Cap infinite bounds to finite sentinels for optimizer compatibility
+    def _cap_inf(entry: Dict[str, Any]) -> Dict[str, Any]:
+        t = entry.get("type")
+        if t in ("float", "int"):
+            lo = entry.get("lower", None)
+            hi = entry.get("upper", None)
+            # Map None/±inf to finite caps
+            if lo is None or (isinstance(lo, (int, float)) and not math.isfinite(lo)):
+                lo = -1e9
+            if hi is None or (isinstance(hi, (int, float)) and not math.isfinite(hi)):
+                hi = 1e9
+            # Ensure ordering
+            if t == "int":
+                # Also clamp huge finite integer bounds into a manageable range for ConfigSpace
+                lo = int(max(-1e9, min(1e9, lo)))
+                hi = int(max(-1e9, min(1e9, hi)))
+                if hi <= lo:
+                    hi = lo + 1
+            else:
+                # Clamp finite float bounds too if extremely large
+                lo = float(max(-1e9, min(1e9, lo)))
+                hi = float(max(-1e9, min(1e9, hi)))
+                if hi <= lo:
+                    hi = lo + 1.0
+            entry["lower"], entry["upper"] = lo, hi
+        return entry
+
+    typed = [_cap_inf(it) for it in typed]
 
     # Validate by loading a .set with safe/default values
     defaults = {}

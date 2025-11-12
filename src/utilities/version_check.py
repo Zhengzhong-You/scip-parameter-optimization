@@ -9,4 +9,3 @@ def ensure_scip_version(required: str = "9.2.4") -> None:
         raise RuntimeError("Unable to determine SCIP version; ensure scip is installed and on PATH.")
     if v != required:
         raise RuntimeError(f"SCIP CLI version mismatch: found {v}, required {required}.")
-

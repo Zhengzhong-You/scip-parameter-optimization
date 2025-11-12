@@ -2,14 +2,41 @@ from typing import Dict, Any, List, Tuple
 import json, time
 import pandas as pd
 from pathlib import Path
+import sys, os, importlib, site
 
-import rbfopt
+# Avoid name collision with this package's own module 'rbfopt'.
+# Dynamically import the third-party 'rbfopt' from site-packages.
+def _import_third_party_rbfopt():
+    """Import the pip-installed 'rbfopt' by temporarily removing this project's 'src' and the local package from sys.modules.
+
+    This allows 'import rbfopt' to resolve to site-packages even though we have a local package named 'rbfopt'.
+    """
+    # Compute this repo's src path
+    repo_src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    # Save and modify sys.path and sys.modules
+    orig_path = list(sys.path)
+    orig_mod = sys.modules.get('rbfopt')
+    try:
+        # Remove our src from path if present
+        try:
+            sys.path.remove(repo_src)
+        except ValueError:
+            pass
+        # Drop the local package binding so import finds site-packages
+        if 'rbfopt' in sys.modules:
+            del sys.modules['rbfopt']
+        return importlib.import_module('rbfopt')
+    finally:
+        # Restore sys.path (do not restore sys.modules['rbfopt'] to avoid re-shadowing during this module's lifetime)
+        sys.path[:] = orig_path
+
+rbfopt = _import_third_party_rbfopt()
 
 from utilities.logs import per_instance_T_infty
 from utilities.scoring import r_hat_ratio
 
 
-def run_rbfopt(whitelist: List[Dict, Any], runner_fn, instances: List[str], tau: float,
+def run_rbfopt(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str], tau: float,
                tinf_base: Dict[str, float],
                max_evaluations: int = 100, seed: int = 0, out_dir: str = "./runs", tag: str = "rbfopt"
                ) -> Tuple[Dict[str, Any], float, pd.DataFrame, Dict[str, float]]:
@@ -46,7 +73,8 @@ def run_rbfopt(whitelist: List[Dict, Any], runner_fn, instances: List[str], tau:
             rhat = r_hat_ratio(tinf_cand, tinf_base, cap=1e3)
             return float(rhat)
 
-    settings = rbfopt.RbfoptSettings(max_evaluations=int(max_evaluations), random_seed=int(seed))
+    # rbfopt 4.x uses 'rand_seed' instead of 'random_seed'
+    settings = rbfopt.RbfoptSettings(max_evaluations=int(max_evaluations), rand_seed=int(seed))
     bb = BB(); algo = rbfopt.RbfoptAlgorithm(settings, bb)
 
     start = time.time()
