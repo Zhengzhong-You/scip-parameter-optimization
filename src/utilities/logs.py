@@ -6,6 +6,20 @@ from collections import deque
 import math
 import re
 
+# Import common log parsing utilities
+from .log_utils import parse_progress_series, _slice_after_last_restart, _normalize_col, _parse_float_cell
+
+# Import estimation functions from the separate module
+from .est_time import (
+    estimate_svb_from_log,
+    estimate_total_nodes_svb,
+    estimate_remaining_time,
+    compute_T_infty,
+    diagnose_t_infty,
+    format_t_infty_diagnostic,
+    per_instance_T_infty
+)
+
 
 def parse_scip_log_lines(lines: List[str]) -> Dict[str, Any]:
     HEADER_RE = re.compile(r'^\s*time\s*\|\s*node\s*\|\s*left\s*\|', re.I)
@@ -102,244 +116,5 @@ def shrink_scip_log_for_gpt(log_text: str, max_length: int = 1500) -> str:
         result = result[:max_length-15] + "\n...[truncated]"
     return result
 
-
-# -----------------------------
-# Progress table parsing (rich)
-# -----------------------------
-
-_HDR_RE = re.compile(r"^\s*time\s*\|\s*node\s*\|\s*left\s*\|", re.I)
-_ROW_RE = re.compile(r"^\s*(?:\*|d)?\d+(?:\.\d+)?s\|")
-
-
-def _normalize_col(name: str) -> str:
-    n = re.sub(r"\s+", " ", name.strip().lower())
-    n = n.replace("dual bound", "dual").replace("primal bound", "primal")
-    n = n.replace("dualbound", "dual").replace("primalbound", "primal")
-    return n
-
-
-def _parse_float_cell(s: str) -> float | None:
-    t = s.strip()
-    if t.endswith("s") and t[:-1].replace(".", "", 1).replace("-", "", 1).isdigit():
-        t = t[:-1]
-    t = t.replace("%", "")
-    try:
-        return float(t)
-    except Exception:
-        tl = t.lower()
-        if tl in ("inf", "+inf", "infinite", "infinity"):
-            return float("inf")
-        if tl in ("-inf", "-infinity"):
-            return float("-inf")
-    return None
-
-
-def parse_progress_series(log_text: str) -> Tuple[List[str], List[Dict[str, Any]]]:
-    """Parse the SCIP progress table into a series of rows with named columns.
-
-    Returns (columns, rows), where each row has possible keys among:
-      time, node, left, dual, primal, gap
-    """
-    lines = log_text.splitlines() if isinstance(log_text, str) else list(log_text)
-    cols: List[str] = []
-    rows: List[Dict[str, Any]] = []
-    parsing = False
-    for ln in lines:
-        if _HDR_RE.match(ln):
-            # Parse header columns by splitting on '|'
-            parts = [p.strip() for p in ln.split("|")]
-            cols = [_normalize_col(p) for p in parts if p.strip()]
-            parsing = True
-            continue
-        if parsing and _ROW_RE.match(ln):
-            parts = [p.strip() for p in ln.split("|")]
-            # align to header count (skip empty fragments at ends)
-            vals = [p for p in parts if p != ""]
-            row: Dict[str, Any] = {}
-            for idx, name in enumerate(cols[: len(vals)]):
-                key = None
-                if name.startswith("time"):
-                    key = "time"
-                elif name.startswith("node"):
-                    key = "node"
-                elif name.startswith("left"):
-                    key = "left"
-                elif name.startswith("dual"):
-                    key = "dual"
-                elif name.startswith("primal"):
-                    key = "primal"
-                elif name.startswith("gap"):
-                    key = "gap"
-                if key:
-                    row[key] = _parse_float_cell(vals[idx])
-            rows.append(row)
-        # Stop parsing on a blank line after table or summary begins
-        if parsing and (ln.strip().startswith("SCIP Status") or ln.strip().startswith("Presolving Time") or ln.strip() == ""):
-            parsing = False
-    return cols, rows
-
-
-def estimate_svb_from_log(log_text: str) -> Dict[str, Any]:
-    """Estimate (a, kappa, C, varphi) per Theorem, from SCIP progress rows.
-
-    Uses adjacent progress rows to form pairs (Δb/ΔG) vs G_bar with
-    G = |primal - dual|, b = processed nodes, and fits y = a + kappa * x
-    where y = log(Δb/ΔG), x = G_bar.
-    """
-    _, rows = parse_progress_series(log_text)
-    pairs_x: List[float] = []
-    pairs_y: List[float] = []
-    last = None
-    for r in rows:
-        # Need finite node, primal, dual
-        node = r.get("node"); primal = r.get("primal"); dual = r.get("dual")
-        if node is None or primal is None or dual is None:
-            continue
-        if not (math.isfinite(node) and math.isfinite(primal) and math.isfinite(dual)):
-            continue
-        G = abs(primal - dual)
-        cur = (float(node), float(G))
-        if last is not None:
-            db = cur[0] - last[0]
-            dG = last[1] - cur[1]  # should be positive if gap decreases
-            if db > 0 and dG > 1e-12 and math.isfinite(dG):
-                y = math.log(db / dG)
-                x = 0.5 * (last[1] + cur[1])
-                if math.isfinite(x) and math.isfinite(y):
-                    pairs_x.append(x); pairs_y.append(y)
-        last = cur
-
-    n = len(pairs_x)
-    if n < 2:
-        return {"a": None, "kappa": None, "C": None, "varphi": None, "samples": 0}
-
-    # Simple robust trimming: drop extreme 5% tails if enough samples
-    order = sorted(range(n), key=lambda i: pairs_y[i])
-    keep_idx = order
-    if n >= 20:
-        k = max(1, int(0.05 * n))
-        keep_idx = order[k : n - k]
-    X = [pairs_x[i] for i in keep_idx]
-    Y = [pairs_y[i] for i in keep_idx]
-
-    x_mean = sum(X) / len(X)
-    y_mean = sum(Y) / len(Y)
-    sxx = sum((x - x_mean) ** 2 for x in X)
-    sxy = sum((x - x_mean) * (y - y_mean) for x, y in zip(X, Y))
-    if sxx <= 1e-18:
-        return {"a": None, "kappa": None, "C": None, "varphi": None, "samples": n}
-    kappa = sxy / sxx
-    a = y_mean - kappa * x_mean
-    varphi = math.exp(kappa)
-    C = math.exp(a) / (kappa if abs(kappa) > 1e-12 else 1e-12)
-    return {"a": a, "kappa": kappa, "C": C, "varphi": varphi, "samples": n}
-
-
-def estimate_remaining_time(log_text: str, tau: float, summary: Dict[str, Any]) -> Dict[str, Any]:
-    """Estimate remaining time using SVB model at timeout.
-
-    summary expects keys: 'solve_time', 'primal', 'dual', 'n_nodes'.
-    Returns dict with fields: theta, b_left, G, C, kappa, varphi, b_sub, b_rem, T_rem.
-    """
-    est = estimate_svb_from_log(log_text)
-    if not est.get("varphi"):
-        return {"error": "insufficient_samples"}
-    varphi = float(est["varphi"]); C = float(est["C"]); kappa = float(est["kappa"])
-
-    # Extract last progress row for left and G
-    _, rows = parse_progress_series(log_text)
-    last_row = None
-    for r in rows[::-1]:
-        if r.get("left") is not None:
-            last_row = r; break
-    b_left = int(last_row.get("left", 0)) if last_row else 0
-    # Use latest available primal/dual for G
-    G = None
-    for r in rows[::-1]:
-        pr = r.get("primal"); du = r.get("dual")
-        if pr is not None and du is not None and math.isfinite(pr) and math.isfinite(du):
-            G = abs(float(pr) - float(du)); break
-    if G is None:
-        pr = summary.get("primal"); du = summary.get("dual")
-        if pr is not None and du is not None and math.isfinite(float(pr)) and math.isfinite(float(du)):
-            G = abs(float(pr) - float(du))
-    if G is None:
-        return {"error": "no_gap_available", **est}
-
-    t = float(summary.get("solve_time", tau))
-    b_obs = float(summary.get("n_nodes", 0.0) or 0.0)
-    theta = max(t, 1e-9) / max(b_obs, 1.0)
-
-    try:
-        b_sub = C * (varphi ** float(G))
-    except OverflowError:
-        b_sub = float("inf")
-    b_rem = float(b_left) * float(b_sub)
-    T_rem = float(theta) * float(b_rem)
-    return {
-        "theta": theta,
-        "b_left": b_left,
-        "G": float(G),
-        "C": C,
-        "kappa": kappa,
-        "varphi": varphi,
-        "b_sub": b_sub,
-        "b_rem": b_rem,
-        "T_rem": T_rem,
-    }
-
-
-def compute_T_infty(log_text: str, tau: float, summary: Dict[str, Any]) -> Dict[str, Any]:
-    """Compute the extrapolated time-to-optimality surrogate T_infty.
-
-    Returns dict with keys: T_infty, solved (bool), gap, details (dict from estimate_remaining_time if used), warning (optional).
-    """
-    pr = summary.get("primal"); du = summary.get("dual")
-    gap = None
-    try:
-        if pr is not None and du is not None:
-            prf = float(pr); duf = float(du)
-            if math.isfinite(prf) and math.isfinite(duf):
-                gap = abs(prf - duf)
-    except Exception:
-        gap = None
-    t = float(summary.get("solve_time", tau))
-    if gap is not None and gap <= 0.0:
-        return {"T_infty": t, "solved": True, "gap": 0.0, "details": {}}
-
-    # Check for root-only case (max node = 1)
-    _, rows = parse_progress_series(log_text)
-    max_node = 1.0
-    for row in rows:
-        node = row.get("node")
-        if node is not None and math.isfinite(node):
-            max_node = max(max_node, float(node))
-
-    if max_node <= 1.0:
-        # Set remaining time to very large number since no tree exploration occurred
-        T_rem_large = 1e12  # Very large remaining time
-        T_infty_large = float(tau) + T_rem_large
-        warning_msg = f"WARNING: Solver stuck at root node (max_node={max_node}). T_infty set to very large value ({T_infty_large:.2e})."
-        print(warning_msg)
-        return {"T_infty": T_infty_large, "solved": False, "gap": gap, "details": {"root_only": True, "T_rem": T_rem_large}, "warning": warning_msg}
-
-    det = estimate_remaining_time(log_text, tau=tau, summary=summary)
-    if det.get("error"):
-        return {"T_infty": t if gap is None else (tau + t), "solved": False, "gap": gap, "details": det}
-    return {"T_infty": float(tau) + float(det.get("T_rem", 0.0)), "solved": False, "gap": gap, "details": det}
-
-
-def per_instance_T_infty(per_m: Dict[str, Dict[str, Any]], tau: float) -> Dict[str, float]:
-    """Compute T_infty for each instance given per-instance summary dicts with 'log_path'."""
-    out: Dict[str, float] = {}
-    for name, m in per_m.items():
-        lp = m.get("log_path")
-        try:
-            text = open(lp, "r", encoding="utf-8", errors="ignore").read() if lp and isinstance(lp, str) and lp else ""
-        except Exception:
-            text = ""
-        res = compute_T_infty(text, tau=tau, summary=m)
-        out[name] = float(res.get("T_infty", float("inf")))
-    return out
 
 
