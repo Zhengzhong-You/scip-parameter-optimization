@@ -6,7 +6,6 @@ from typing import Any, Dict, List
 DEFAULT_API_PARAMS = {
     "temperature": 0.0,
     "top_p": 1.0,
-    "seed": 42,
     "max_tokens": 1000000000
 }
 
@@ -20,7 +19,7 @@ def call_gpt(input_messages: List[Dict[str, Any]], model: str = "gpt-5-nano") ->
 
     Uses fixed parameters for reproducibility:
     - temperature=0.0 (deterministic sampling)
-    - top_p=1.0, seed=42, max_tokens=1000000000
+    - top_p=1.0, max_tokens=1000000000
 
     Requires env var OPENAI_API_KEY to be set.
     """
@@ -65,7 +64,7 @@ def call_gpt_json(input_messages: List[Dict[str, Any]], model: str = "gpt-5-nano
 
     Uses fixed parameters for reproducibility:
     - temperature=0.0 (deterministic sampling)
-    - top_p=1.0, seed=42, max_tokens=1000000000
+    - top_p=1.0, max_tokens=1000000000
 
     Returns the parsed JSON object as-is (no schema enforcement).
     """
