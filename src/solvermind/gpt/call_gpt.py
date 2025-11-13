@@ -17,10 +17,7 @@ def call_gpt(input_messages: List[Dict[str, Any]], model: str = "gpt-5-nano") ->
     """Call the OpenAI *Responses API* and return a parsed JSON object with keys:
     { 'params': {...}, 'meta': {...}, 'reasons': '...' }.
 
-    Uses fixed parameters for reproducibility:
-    - temperature=0.0 (deterministic sampling)
-    - top_p=1.0, max_tokens=1000000000
-
+    Uses DEFAULT_API_PARAMS for reproducibility.
     Requires env var OPENAI_API_KEY to be set.
     """
     # Lazy import to keep package import-time light
@@ -62,10 +59,7 @@ def call_gpt(input_messages: List[Dict[str, Any]], model: str = "gpt-5-nano") ->
 def call_gpt_json(input_messages: List[Dict[str, Any]], model: str = "gpt-5-nano") -> Dict[str, Any]:
     """General JSON caller for the OpenAI Responses API.
 
-    Uses fixed parameters for reproducibility:
-    - temperature=0.0 (deterministic sampling)
-    - top_p=1.0, max_tokens=1000000000
-
+    Uses DEFAULT_API_PARAMS for reproducibility.
     Returns the parsed JSON object as-is (no schema enforcement).
     """
     from openai import OpenAI
