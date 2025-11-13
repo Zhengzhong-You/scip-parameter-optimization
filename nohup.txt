@@ -1,0 +1,2 @@
+Best R_hat(p,q): inf
+Best config: {}

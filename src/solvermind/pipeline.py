@@ -28,7 +28,9 @@ def _aggregate_summary(per_instance_metrics: Dict[str, Dict[str, Any]]) -> Dict[
               or str(m.get("status", "")).lower().find("unbounded") >= 0]
     unsolved = [m for m in per_instance_metrics.values() if m not in solved]
 
-    gm_time = gm([float(m.get("solve_time") or 0.0) for m in solved]) if solved else 0.0
+    # Include all instances in time calculation, not just solved ones
+    all_times = [float(m.get("solve_time") or 0.0) for m in per_instance_metrics.values() if m.get("solve_time") is not None]
+    gm_time = gm(all_times) if all_times else 0.0
     import math
     nodes_vals = [float(m.get("n_nodes")) for m in per_instance_metrics.values() if m.get("n_nodes") is not None and math.isfinite(float(m.get("n_nodes")))]
     gm_nodes = gm(nodes_vals) if nodes_vals else 0.0
@@ -77,11 +79,16 @@ def run_tuning(
 
     feats = collect_batch_features(instances)
 
-    gpt_log_path = os.path.join(outdir, "gpt_reasoning.log")
-    gpt_log = open(gpt_log_path, "w", encoding="utf-8")
-    gpt_log.write("# SolverMind GPT Reasoning Log\n")
+    solvermind_log_path = os.path.join(outdir, "solvermind.log")
+    solvermind_log = open(solvermind_log_path, "w", encoding="utf-8")
+    solvermind_log.write("# SolverMind Reasoning Log\n")
     import time as time_module
-    gpt_log.write(f"# Time: {time_module.strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+    solvermind_log.write(f"# Time: {time_module.strftime('%Y-%m-%d %H:%M:%S')}\n")
+    solvermind_log.write(f"# Model: {gpt_model}\n")
+    from .gpt.call_gpt import get_api_params
+    api_params = get_api_params()
+    param_str = ", ".join([f"{k}={v}" for k, v in api_params.items()])
+    solvermind_log.write(f"# Reproducibility: {param_str}\n\n")
 
 
     trials_csv = os.path.join(outdir, "batch_trials.csv")
@@ -136,102 +143,95 @@ def run_tuning(
     history_data[0]["param_file"] = ""
     history_data[0]["tau"] = time_limit
 
-    # Write baseline summary to main log
-    try:
-        gpt_log.write("=== BASELINE (Trial 0) ===\n")
-        gpt_log.write('"""""""""""""""""\n')
-        gpt_log.write("CONFIGURATION:\n")
-        gpt_log.write("Parameters: Default SCIP settings\n")
-        gpt_log.write(f"\nRESULTS:\n")
-        gpt_log.write(f"R_hat: {r0:.6f} (baseline)\n")
-        gpt_log.write(f"Solve Time: {summ0.get('gm_time', 0):.2f}s\n")
-        gpt_log.write(f"Nodes: {summ0.get('gm_nodes', 0):.0f}\n")
-        gpt_log.write(f"Solved: {summ0.get('solved_pct', 0):.1f}%\n\n")
-        gpt_log.flush()
-    except Exception:
-        pass
 
     for trial_idx in range(1, int(max_trials) + 1):
         prompt = build_prompt(features_batch=feats, history=history_data, whitelist=whitelist, max_changes=max_edits)
-        gpt_log.write(f"=== TRIAL {trial_idx} ===\n")
-        gpt_log.write('"""""""""""""""""\n')
-        gpt_log.write("LLM INPUT:\n")
+        # For trial 1, we need to create the complete prompt that becomes the file content
+        if trial_idx == 1:
+            # Reset the file to write the complete prompt format
+            solvermind_log.seek(0)
+            solvermind_log.truncate()
+            solvermind_log.write("You are a SCIP parameter tuning assistant.\n")
+            solvermind_log.write("Prefer mathematically impactful solver knobs (branching, presolving, heuristics, separators).\n")
+            solvermind_log.write("Do NOT propose I/O, display, logging/verbosity, output formatting, file, or time measurement parameters.\n")
+            solvermind_log.write("Optimize the distribution-level ratio objective R_hat across the batch, unless the instance batch is singleton.\n")
+            solvermind_log.write("Analyze solver log snippets from previous trials (and any provided metadata) to understand solving behavior.\n")
+            solvermind_log.write("Use log information (presolving, progress, timing) to guide parameter choices.\n")
+            solvermind_log.write(f"LIMIT: Change at most {max_edits} parameters per trial.\n")
+            solvermind_log.write("ALWAYS return strict JSON with keys: params (dict of name->dict with 'value' and 'reason' keys). Example: {'params': {'branching/relpscost/minreliable': {'value': 2, 'reason': 'reduce strong branching overhead'}}}.\n")
+            solvermind_log.write("IMPORTANT: Parameter changes cannot be accumulated. Each trial starts from default parameters. If you want to keep successful changes from previous trials, you can say 'I choose to keep the changes from previous trials: param1=value1, param2=value2, and this does not count to the max edits, and you can do still max edits changes for the new round'. If parameters were bad, just don't mention them since all parameter changes will be from the default ones.\n\n")
 
-        # Convert JSON prompt to human-readable format
-        def format_prompt_readable(prompt_data):
-            result = ""
-            for message in prompt_data:
-                role = message.get("role", "")
-                content = message.get("content", "")
+            solvermind_log.write("Scoring: we minimize a batch-level time ratio R_hat computed from extrapolated time-to-optimality surrogates (T_infty).\n")
+            solvermind_log.write("Treat improvements in time, gap as beneficial signals. Actually the T_infty is a uniform metric which you should consider. Less time and less gap means less T_infty.\n\n")
 
-                if role == "system":
-                    result += "SYSTEM INSTRUCTIONS:\n"
-                    result += content + "\n\n"
-                elif role == "user":
-                    # Parse the user content JSON
-                    try:
-                        user_data = json.loads(content)
-                        result += "USER REQUEST:\n"
-                        result += f"Task: {user_data.get('task', '')}\n"
+            solvermind_log.write("USER REQUEST:\n")
+            solvermind_log.write("Task: propose_parameters\n")
+            solvermind_log.write("Problem instances:\n")
+            for p in instances:
+                name = instance_name(p)
+                solvermind_log.write(f"  • {name}\n")
 
-                        # Features
-                        if 'features' in user_data and 'batch' in user_data['features']:
-                            result += f"Problem instances:\n"
-                            for inst in user_data['features']['batch']:
-                                result += f"  • {inst.get('instance', '')}: {inst.get('features', {}).get('nvars', '')} variables, {inst.get('features', {}).get('nconss', '')} constraints\n"
+            solvermind_log.write(f"Parameter whitelist ({whitelist.get('regime', '')}): ")
+            param_list = whitelist.get('params', [])
+            solvermind_log.write(f"{len(param_list)} parameters available\n")
+            for param in param_list:
+                default_val = defaults.get(param, "unknown")
+                solvermind_log.write(f"  • {param} (default: {default_val})\n")
 
-                        # Whitelist
-                        if 'reinforced_whitelist' in user_data:
-                            wl = user_data['reinforced_whitelist']
-                            result += f"Parameter whitelist ({wl.get('regime', '')}): {len(wl.get('params', []))} parameters available\n"
+            solvermind_log.write("Previous trials:\n")
+            solvermind_log.write("  Trial 0: R_hat=1.000000, 0 parameter(s) changed\n")
+            solvermind_log.write("    SCIP solver logs:\n")
 
-                        # Trial history
-                        if 'trial_history' in user_data:
-                            result += f"Previous trials:\n"
-                            for trial in user_data['trial_history']:
-                                trial_num = trial.get('trial', '')
-                                params = trial.get('params', {})
-                                r_hat = trial.get('r_hat', '')
-                                result += f"  Trial {trial_num}: R_hat={r_hat:.6f}, {len(params)} parameter(s) changed\n"
-                                if params:
-                                    for k, v in params.items():
-                                        result += f"    • {k} = {v}\n"
-                                if trial.get('reasons'):
-                                    result += f"    Reasoning: {trial['reasons']}\n"
+            # Add baseline logs
+            for nm, m in baseline_metrics.items():
+                lp = m.get("log_path")
+                if lp and os.path.exists(lp):
+                    with open(lp, "r", encoding="utf-8", errors="ignore") as fh:
+                        snippet = shrink_scip_log_for_gpt(fh.read(), max_length=10000)
+                        solvermind_log.write(f"    [Instance: {nm}]\n")
+                        for line in snippet.split('\n'):
+                            if line.strip():
+                                solvermind_log.write(f"    {line}\n")
+                        solvermind_log.write(f"\n")
 
-                                # Add SCIP logs for this trial
-                                if 'scip_logs_indexed' in trial:
-                                    result += f"    SCIP solver logs:\n"
-                                    for log_entry in trial.get('scip_logs_indexed', []):
-                                        instance = log_entry.get('instance', '')
-                                        snippet = log_entry.get('snippet', '')
-                                        result += f"    [Instance: {instance}]\n"
-                                        # Indent each line of the log snippet
-                                        for line in snippet.split('\n'):
-                                            if line.strip():
-                                                result += f"    {line}\n"
-                                        result += f"\n"
+        # Flush and close the file to ensure it's written completely
+        solvermind_log.flush()
+        solvermind_log.close()
 
-                        result += "\n"
-                    except:
-                        result += content + "\n\n"
-            return result
+        # Call LLM with the entire file content as input
+        with open(solvermind_log_path, "r", encoding="utf-8") as f:
+            file_content = f.read()
 
-        gpt_log.write(format_prompt_readable(prompt))
+        # Create simple prompt structure for the API
+        simple_prompt = [
+            {"role": "user", "content": file_content}
+        ]
 
         from .gpt.call_gpt import call_gpt
-        gpt_reply = call_gpt(prompt, model=gpt_model)
-        params = gpt_reply.get("params", {}) or {}
-        reasons = gpt_reply.get("reasons", "")
+        reply = call_gpt(simple_prompt, model=gpt_model)
+        params_data = reply.get("params", {}) or {}
 
-        gpt_log.write("LLM OUTPUT:\n")
-        gpt_log.write("Proposed parameters:\n")
-        if params:
-            for param_name, param_value in params.items():
-                gpt_log.write(f"  • {param_name} = {param_value}\n")
+        # Reopen the file in append mode to add results
+        solvermind_log = open(solvermind_log_path, "a", encoding="utf-8")
+
+        # Append SolverMind's recommendations to the file
+        solvermind_log.write(f"\nSolverMind recommends:\n")
+        params = {}
+        if params_data:
+            for param_name, param_info in params_data.items():
+                if isinstance(param_info, dict) and 'value' in param_info and 'reason' in param_info:
+                    # New format: {"value": val, "reason": "text"}
+                    value = param_info['value']
+                    reason = param_info['reason']
+                    solvermind_log.write(f"  • {param_name} = {value} ({reason})\n")
+                    params[param_name] = value
+                else:
+                    # Fallback for old format
+                    solvermind_log.write(f"  • {param_name} = {param_info}\n")
+                    params[param_name] = param_info
         else:
-            gpt_log.write("  (no parameters proposed)\n")
-        gpt_log.write(f"\nReasoning:\n{reasons}\n\n")
+            solvermind_log.write("  • No parameter changes recommended\n")
+        solvermind_log.write(f"\n")
 
         applied, rejected = validator.validate(params=params, max_edits=max_edits)
 
@@ -258,27 +258,48 @@ def run_tuning(
         rhat = r_hat_ratio(tinf_p, tinf_base, cap=1e3)
         summary = _aggregate_summary(per_m)
 
-        # Write validation and results in human-readable format
+        # Append trial results to the file in the new format
         try:
-            gpt_log.write("VALIDATION:\n")
-            if applied:
-                gpt_log.write("Applied parameters:\n")
-                for param_name, param_value in applied.items():
-                    default_val = defaults.get(param_name, "unknown")
-                    gpt_log.write(f"  • {param_name}: {default_val} → {param_value}\n")
+            solvermind_log.write(f"This is the result of trial {trial_idx}:\n")
+            solvermind_log.write(f"R_hat: {rhat:.6f} (")
+            # Compare with current best trial, not baseline
+            best_rhat = incumbent["r_hat"]
+            if rhat < best_rhat:
+                solvermind_log.write("success - improved over best trial)")
+            elif rhat > best_rhat:
+                solvermind_log.write("failure - worse than best trial)")
             else:
-                gpt_log.write("No parameters applied (using defaults)\n")
+                solvermind_log.write("neutral - same as best trial)")
+            # Calculate geometric mean of T_infty values for display
+            tinf_values = [float(v) for v in tinf_p.values() if v is not None]
+            from utilities.scoring import gm
+            gm_tinf = gm(tinf_values) if tinf_values else 0.0
+            solvermind_log.write(f"\nT_infty: {gm_tinf:.2f}s\n")
+            solvermind_log.write(f"Nodes: {summary.get('gm_nodes', 0):.0f}\n\n")
 
-            if rejected:
-                gpt_log.write("Rejected parameters:\n")
-                for param_name, param_value in rejected.items():
-                    gpt_log.write(f"  • {param_name} = {param_value} (rejected)\n")
+            solvermind_log.write("Here is the log:\n")
+            # Add SCIP logs for this trial
+            for name, mtr in per_m.items():
+                lp = mtr.get("log_path")
+                if lp and os.path.exists(lp):
+                    with open(lp, "r", encoding="utf-8", errors="ignore") as fh:
+                        snippet = shrink_scip_log_for_gpt(fh.read(), max_length=10000)
+                        solvermind_log.write(f"[Instance: {name}]\n")
+                        for line in snippet.split('\n'):
+                            if line.strip():
+                                solvermind_log.write(f"{line}\n")
+                        solvermind_log.write(f"\n")
 
-            gpt_log.write(f"\nEVALUATION RESULTS:\n")
-            gpt_log.write(f"R_hat: {rhat:.6f}\n")
-            gpt_log.write(f"Solve Time: {summary.get('gm_time', 0):.2f}s\n")
-            gpt_log.write(f"Nodes: {summary.get('gm_nodes', 0):.0f}\n")
-            gpt_log.write(f"Solved: {summary.get('solved_pct', 0):.1f}%\n\n")
+            # Ask for analysis of why parameters succeeded or failed
+            if trial_idx < max_trials:  # Don't ask on the last trial
+                # Always compare with the best trial, not the previous trial
+                best_rhat = incumbent["r_hat"]
+
+                if rhat < best_rhat:
+                    solvermind_log.write("Why did this succeed? Analyze the performance improvement and use this information to make better decisions for the next trial.\n\n")
+                else:
+                    solvermind_log.write("Why did this fail? Analyze what went wrong and use this information to make better decisions for the next trial.\n\n")
+
         except Exception:
             pass
 
@@ -309,13 +330,22 @@ def run_tuning(
         )
 
 
+        # Collect reasons for history
+        reasons_collected = ""
+        if params_data:
+            reason_parts = []
+            for param_name, param_info in params_data.items():
+                if isinstance(param_info, dict) and 'reason' in param_info:
+                    reason_parts.append(f"{param_name}: {param_info['reason']}")
+            reasons_collected = "; ".join(reason_parts)
+
         history_data.append({
             "trial": trial_idx,
             "params": dict(applied),
             "param_defaults": {k: defaults.get(k) for k in applied.keys()},
             "r_hat": rhat,
             "summary": summary,
-            "reasons": reasons,
+            "reasons": reasons_collected,
             "log_snippets": logs,
             "scip_logs_indexed": logs_indexed,
             "combined_log_digest": combined_digest,
@@ -336,23 +366,23 @@ def run_tuning(
 
     # Write final summary in human-readable format
     try:
-        gpt_log.write("=" * 50 + "\n")
-        gpt_log.write("TUNING SESSION COMPLETED\n")
-        gpt_log.write("=" * 50 + "\n")
-        gpt_log.write(f"Best trial: {incumbent['trial']}\n")
-        gpt_log.write(f"Best R_hat: {incumbent['r_hat']:.6f}\n")
+        solvermind_log.write("=" * 50 + "\n")
+        solvermind_log.write("TUNING SESSION COMPLETED\n")
+        solvermind_log.write("=" * 50 + "\n")
+        solvermind_log.write(f"Best trial: {incumbent['trial']}\n")
+        solvermind_log.write(f"Best R_hat: {incumbent['r_hat']:.6f}\n")
         if incumbent['params']:
-            gpt_log.write("Best parameters:\n")
+            solvermind_log.write("Best parameters:\n")
             for param, value in incumbent['params'].items():
                 default_val = defaults.get(param, "unknown")
-                gpt_log.write(f"  • {param}: {default_val} → {value}\n")
+                solvermind_log.write(f"  • {param}: {default_val} → {value}\n")
         else:
-            gpt_log.write("Best configuration: default parameters\n")
-        gpt_log.write(f"Total trials completed: {last_trial}\n")
+            solvermind_log.write("Best configuration: default parameters\n")
+        solvermind_log.write(f"Total trials completed: {last_trial}\n")
     except Exception:
         pass
 
-    gpt_log.close()
+    solvermind_log.close()
 
     return {
         "trials_csv": trials_csv,

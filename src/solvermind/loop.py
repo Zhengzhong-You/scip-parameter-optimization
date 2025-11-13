@@ -10,7 +10,7 @@ def tune_batch(
     max_trials: int = 16,
     max_edits: int = 3,
     outdir: str = "runs",
-    gpt_model: str = "gpt-5",
+    gpt_model: str = "gpt-5-nano",
     seed: int = 0,
     early_stop_patience: int = 0,
     early_stop_delta: float = 0.0,

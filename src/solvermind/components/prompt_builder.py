@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from typing import Dict, Any, List
-from ..gpt.build_tuning_prompt import build_tuning_prompt as _base_build
+from .build_tuning_prompt import build_tuning_prompt as _base_build
 
 
 def build_prompt(features_batch: Dict[str, Any], history: List[Dict[str, Any]], whitelist: Dict[str, Any], max_changes: int) -> list:

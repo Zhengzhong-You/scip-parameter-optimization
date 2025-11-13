@@ -99,9 +99,49 @@ def shrink_scip_log_for_gpt(log_text: str, max_length: int = 1500) -> str:
         out.append("PROBLEM SIZE:")
         out.append(parsed["original_problem"]); out.append("")
     if parsed["presolve_blocks"]:
+        # If there are restarts, use the last presolve block (after restart), otherwise use the first one
+        restart_count = len(parsed["restarts"])
+        if restart_count > 0 and len(parsed["presolve_blocks"]) > 1:
+            # Use the last presolve block (after restart)
+            presolve_block = parsed["presolve_blocks"][-1]
+        else:
+            # Use the first presolve block
+            presolve_block = parsed["presolve_blocks"][0]
+
         out.append("PRESOLVING:")
-        out.extend(parsed["presolve_blocks"][0][:8]); out.append("")
+        out.extend(presolve_block[:8]); out.append("")
     if parsed["progress_blocks"]:
+        # Find root node performance after the last restart
+        # Look for the last progress block that contains node 1 rows after restart indicators
+        root_block = None
+        restart_count = len(parsed["restarts"])
+
+        if restart_count > 0:
+            # Look for progress blocks after restarts - find the last one with node 1
+            for block in reversed(parsed["progress_blocks"]):
+                rows = list(block["rows"])
+                for row in rows:
+                    # Check if this row shows node 1 (root after restart)
+                    if "|     1 |" in row and "unknown" in row:
+                        root_block = block
+                        break
+                if root_block:
+                    break
+
+        # If no restart root found, use first block
+        if not root_block:
+            root_block = parsed["progress_blocks"][0]
+
+        # Show root node performance after last restart
+        out.append("ROOT NODE PERFORMANCE:")
+        out.append(root_block["header"])
+        root_rows = [row for row in list(root_block["rows"]) if "|     1 |" in row][:5]
+        if not root_rows:  # fallback to first 5 rows if no node 1 found
+            root_rows = list(root_block["rows"])[:5]
+        out.extend(root_rows)
+        out.append("")
+
+        # Also include the last few rows as before
         last_block = parsed["progress_blocks"][-1]
         out.append("SOLVING PROGRESS:")
         out.append(last_block["header"])

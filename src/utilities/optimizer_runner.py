@@ -226,7 +226,8 @@ def run_single_instance_optimization(method: str, optimizer_func: Callable,
             wl, instances, runner_fn, tau, tinf_base,
             n_trials=cfg.get("solvermind", {}).get("n_trials", 10),
             seed=cfg.get("solvermind", {}).get("seed", 0),
-            out_dir=out_run
+            out_dir=out_run,
+            config=cfg
         )
     else:
         raise ValueError(f"Unknown optimization method: {method}")

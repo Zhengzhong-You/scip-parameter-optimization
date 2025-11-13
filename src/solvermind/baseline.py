@@ -17,7 +17,7 @@ from utilities.logs import per_instance_T_infty
 
 def run_solvermind(whitelist: List[Dict[str, Any]], instances: List[str], runner_fn, tau: float,
                    tinf_base: Dict[str, float],
-                   n_trials: int = 10, seed: int = 0, out_dir: str = "./runs"
+                   n_trials: int = 10, seed: int = 0, out_dir: str = "./runs", config: Dict[str, Any] = None
                    ) -> Tuple[Dict[str, Any], float, None, Dict[str, float]]:
     """
     SolverMind optimization function compatible with unified runner interface.
@@ -38,13 +38,16 @@ def run_solvermind(whitelist: List[Dict[str, Any]], instances: List[str], runner
     Returns:
         Tuple of (best_config, best_rhat, None, tinf_best)
     """
-    # SolverMind configuration
+    # SolverMind configuration with config file support
+    config = config or {}
+    solvermind_section = config.get("solvermind", {})
+
     solvermind_config = {
         "max_trials": n_trials,
-        "max_edits": 3,  # Default for SolverMind
-        "gpt_model": "gpt-5",  # Default model
-        "early_stop_patience": 3,
-        "early_stop_delta": 0.01,
+        "max_edits": solvermind_section.get("max_edits", 3),  # Default 3, configurable
+        "gpt_model": solvermind_section.get("gpt_model", "gpt-5-nano"),  # Default model
+        "early_stop_patience": solvermind_section.get("early_stop_patience", 3),
+        "early_stop_delta": solvermind_section.get("early_stop_delta", 0.01),
         "whitelist_regime": "curated"  # Use curated parameters
     }
 

@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--time-limit", type=float, default=600.0, help="Time budget per run in seconds (tau)")
     parser.add_argument("--trials", type=int, default=16, help="Trial budget K (default 16)")
     parser.add_argument("--max-edits", type=int, default=3, help="Edit cap m (max per-trial changes to apply)")
-    parser.add_argument("--model", default="gpt-5", help="OpenAI model to use (default gpt-5)")
+    parser.add_argument("--model", default="gpt-5-nano", help="OpenAI model to use (default gpt-5-nano)")
     parser.add_argument("--outdir", default="runs", help="Output directory root")
     parser.add_argument("--seed", type=int, default=0, help="Seed shift for SCIP randomization")
     parser.add_argument("--mode", choices=["single", "ac", "ac-train", "ac-test", "isac"], default=None, help="Experiment mode: distributional tuning (ac), train-only, or instance-specific (isac)")

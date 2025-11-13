@@ -1,103 +1,52 @@
 #!/usr/bin/env python3
 """
-Quick T_infty test utility.
+Quick T_infty tester for a single SCIP log file.
 
 Usage:
-  PYTHONPATH=./src python3 scripts/test_tinfty.py \
-    --log runs/single_quick/.../log/..._scip_trial_2.log \
-    --tau 10
+  source scip_env/bin/activate
+  PYTHONPATH=./src python3 scripts/test_tinfty.py --log /path/to/log.log --tau 60
 
-This reads the SCIP log, parses a minimal summary, and computes:
-  - compute_T_infty(log_text, tau, summary)
-  - per_instance_T_infty({name: metrics}, tau)
-
-It prints both results and optional diagnostics.
+Prints the computed T_infty and key diagnostics (root-dual, terminal-primal,
+theta_late, estimated b_hat, etc.). The parser is restart-aware and uses the
+last row with left==2 after the final restart as the root dual bound anchor.
 """
-
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import sys
 
-from utilities.logs import (
-    compute_T_infty,
-    per_instance_T_infty,
-    diagnose_t_infty,
-    format_t_infty_diagnostic,
-)
-
-# Private util, but safe to import for testing
-from utilities.runner import _parse_summary as _parse_summary_from_log
+from utilities.logs import compute_T_infty, diagnose_t_infty
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Compute T_infty from a SCIP log")
-    ap.add_argument("--log", required=True, help="Path to SCIP log file")
-    ap.add_argument(
-        "--tau",
-        type=float,
-        required=True,
-        help="Time limit (seconds) used during the run (needed for extrapolation)",
-    )
-    ap.add_argument(
-        "--diagnostics",
-        action="store_true",
-        help="Print detailed diagnostics for the T_infty computation",
-    )
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--log", required=True, help="Path to a SCIP .log file")
+    ap.add_argument("--tau", type=float, default=60.0, help="Time budget tau (seconds)")
     args = ap.parse_args()
 
-    log_path = args.log
-    if not os.path.exists(log_path):
-        print(f"ERROR: Log file not found: {log_path}", file=sys.stderr)
-        return 1
+    if not os.path.exists(args.log):
+        raise SystemExit(f"Log not found: {args.log}")
 
-    try:
-        with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
-            log_text = f.read()
-    except Exception as e:
-        print(f"ERROR: Failed to read log file: {e}", file=sys.stderr)
-        return 1
+    with open(args.log, "r", encoding="utf-8", errors="ignore") as f:
+        text = f.read()
 
-    # Build minimal summary from the log to pass into compute_T_infty
-    summary = _parse_summary_from_log(log_path)
-    # Fill a few defaults to be safe
-    if "solve_time" not in summary:
-        summary["solve_time"] = args.tau
+    # Minimal summary needed: solve_time, primal, dual, n_nodes if available
+    # For a raw log file we do not necessarily have a parsed summary; we pass blanks
+    summary = {}
 
-    # Direct computation from raw log
-    comp = compute_T_infty(log_text, tau=float(args.tau), summary=summary)
+    res = compute_T_infty(text, tau=float(args.tau), summary=summary)
+    diag = diagnose_t_infty(text, tau=float(args.tau), summary=summary)
 
-    # Per-instance API emulation (as used by pipelines)
-    metrics = {
-        "log_path": log_path,
-        "status": summary.get("status"),
-        "solve_time": summary.get("solve_time"),
-        "primal": summary.get("primal"),
-        "dual": summary.get("dual"),
-        "gap": summary.get("gap"),
-        "n_nodes": summary.get("n_nodes"),
-    }
-    tinf_map = per_instance_T_infty({"test": metrics}, tau=float(args.tau))
-
-    out = {
-        "compute_T_infty": comp,
-        "per_instance_T_infty": {"test": tinf_map.get("test")},
-    }
-    print(json.dumps(out, indent=2))
-
-    if args.diagnostics:
-        try:
-            diag = diagnose_t_infty(log_text, tau=float(args.tau), summary=summary)
-            print("\n=== Diagnostics ===")
-            print(format_t_infty_diagnostic(diag))
-        except Exception as e:
-            print(f"WARNING: Failed to produce diagnostics: {e}")
-
-    return 0
+    print("T_infty:", res.get("T_infty"))
+    print("Solved?", res.get("solved"))
+    print("Gap_end:", res.get("gap"))
+    print("Details:")
+    print(json.dumps(res.get("details", {}), indent=2))
+    print("\nDiagnostics:")
+    print(json.dumps(diag, indent=2, default=lambda o: float(o) if hasattr(o, '__float__') else str(o)))
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
 

@@ -2,9 +2,25 @@
 import os, json
 from typing import Any, Dict, List
 
-def call_gpt(input_messages: List[Dict[str, Any]], model: str = "gpt-5") -> Dict[str, Any]:
+# Default API parameters for reproducibility
+DEFAULT_API_PARAMS = {
+    "temperature": 0.0,
+    "top_p": 1.0,
+    "seed": 42,
+    "max_tokens": 1000000000
+}
+
+def get_api_params() -> dict:
+    """Return the current API parameters used for reproducibility."""
+    return DEFAULT_API_PARAMS.copy()
+
+def call_gpt(input_messages: List[Dict[str, Any]], model: str = "gpt-5-nano") -> Dict[str, Any]:
     """Call the OpenAI *Responses API* and return a parsed JSON object with keys:
     { 'params': {...}, 'meta': {...}, 'reasons': '...' }.
+
+    Uses fixed parameters for reproducibility:
+    - temperature=0.0 (deterministic sampling)
+    - top_p=1.0, seed=42, max_tokens=1000000000
 
     Requires env var OPENAI_API_KEY to be set.
     """
@@ -13,9 +29,11 @@ def call_gpt(input_messages: List[Dict[str, Any]], model: str = "gpt-5") -> Dict
     client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
     # Ask for structured JSON back (Responses API doesn't use response_format)
+    # Add reproducibility parameters for consistent results
     resp = client.responses.create(
         model=model,
-        input=input_messages
+        input=input_messages,
+        **DEFAULT_API_PARAMS
     )
 
     # Prefer the convenience accessor if present, otherwise drill into output
@@ -42,17 +60,23 @@ def call_gpt(input_messages: List[Dict[str, Any]], model: str = "gpt-5") -> Dict
     return {"params": params, "meta": meta, "reasons": reasons}
 
 
-def call_gpt_json(input_messages: List[Dict[str, Any]], model: str = "gpt-5") -> Dict[str, Any]:
+def call_gpt_json(input_messages: List[Dict[str, Any]], model: str = "gpt-5-nano") -> Dict[str, Any]:
     """General JSON caller for the OpenAI Responses API.
+
+    Uses fixed parameters for reproducibility:
+    - temperature=0.0 (deterministic sampling)
+    - top_p=1.0, seed=42, max_tokens=1000000000
 
     Returns the parsed JSON object as-is (no schema enforcement).
     """
     from openai import OpenAI
     client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
+    # Add reproducibility parameters for consistent results
     resp = client.responses.create(
         model=model,
-        input=input_messages
+        input=input_messages,
+        **DEFAULT_API_PARAMS
     )
 
     try:

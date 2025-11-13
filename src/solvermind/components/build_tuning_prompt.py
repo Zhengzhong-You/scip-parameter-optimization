@@ -59,6 +59,8 @@ def build_tuning_prompt(features: Dict[str, Any], history: List[Dict[str, Any]],
             "batch_focus": "Prefer changes likely to reduce R_hat across the batch",
             "avoid_defaults": "Avoid proposing default-equal values unless justified",
             "threads_policy": "Do not propose thread-related changes; keep default single-thread settings",
+            "parameter_accumulation": "Parameter changes cannot be accumulated. Each trial starts from default parameters. If you want to keep successful changes from previous trials, you need to propose these changes again with reasons, kept from the last trails, and this does not count to the max edits, and you can do still EXTRA max edits changes for the new round. If parameters were bad, just don't mention them since all parameter changes will be from the default ones.",
+            "tuning_strategy": "In practice you'll usually get more from (1) presolving/propagation and cut separation, (2) primal heuristics (to get an incumbent early), (3) branching, and (4) node selection last. SCIP's defaults for branching and node selection are already strong (default branching is the relpscost hybrid reliability/pseudocost rule; node selection is BestEstimate with plunging), so your first tuning energy is better spent on the parts that change the LP relaxation and produce incumbents. Use a greedy strategy: once you find some parameter can enhance the branching performance for example, you keep it, and always keep it, and then test for the next parameters trial. Keep useful parameter changes if found to be helpful.",
         },
         "return_format": {"params": "name->value", "reasons": "short rationale"}
     }
