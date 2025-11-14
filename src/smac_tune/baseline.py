@@ -52,14 +52,29 @@ def run_smac(whitelist: List[Dict[str, Any]], instance: str, runner_fn, tau: flo
     import logging
     logging.basicConfig(level=logging.INFO)
 
-    scenario = Scenario(cs, n_trials=int(n_trials), seed=int(seed), deterministic=True)
+    # Create output directory structure first to put SMAC internal files there too
+    out = Path(out_dir) / f"{tag}_{int(time.time())}"
+    out.mkdir(parents=True, exist_ok=True)
+    smac_internal_dir = out / "smac_internal"
+
+    scenario = Scenario(cs, n_trials=int(n_trials), seed=int(seed), deterministic=True,
+                       output_directory=str(smac_internal_dir))
     smac = HyperparameterOptimizationFacade(scenario, objective)
 
     start = time.time()
     incumbent = smac.optimize()
     total_time = time.time() - start
 
-    best_dict = {k: incumbent[k] for k in incumbent}
+    # Convert ConfigSpace Configuration to JSON-serializable dict
+    best_dict = {}
+    for k in incumbent:
+        val = incumbent[k]
+        if hasattr(val, 'item'):  # numpy types
+            best_dict[k] = val.item()
+        elif isinstance(val, (bool, int, float, str)):  # native types
+            best_dict[k] = val
+        else:  # fallback for other types
+            best_dict[k] = str(val)
 
     # Evaluate best config
     out = runner_fn(best_dict, instance, tau)
@@ -71,8 +86,7 @@ def run_smac(whitelist: List[Dict[str, Any]], instance: str, runner_fn, tau: flo
 
     trials_df = pd.DataFrame([{"trial": -1, "r_hat": float(best_L), "config": json.dumps(best_dict), "total_time": total_time}])
 
-    out = Path(out_dir) / f"{tag}_{int(time.time())}"
-    out.mkdir(parents=True, exist_ok=True)
+    # Output directory already created above
     (out / "best_config.json").write_text(json.dumps(best_dict, indent=2))
     (out / "best_R_hat.txt").write_text(str(best_L))
     (out / "per_instance.json").write_text(json.dumps(per_logs, indent=2))

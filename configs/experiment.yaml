@@ -1,23 +1,18 @@
-data:
-  instances_dir: instance/cvrp/mps
-  pattern: "*.mps.gz"
-  train_fraction: 0.3
-  train_cap: 20
-  use_explicit_split: false
-
 runner:
-  tau: 600
-
-# Objective (R_hat): baselines will compute R_hat(p,q) relative to defaults.
-# No additional parameters are required.
+  tau: 300
 
 smac:
-  n_trials: 50
-  seed: 0
+  n_trials: 50  # Number of optimization trials (default: 100)
+  seed: 42      # Random seed (default: 0)
 
 rbfopt:
   max_evaluations: 50
-  seed: 0
+  seed: 42
 
-logging:
-  out_dir: runs/baselines
+solvermind:
+  max_edits: 5  # Number of parameters to change per trial (default: 3)
+  n_trials: 20  # Number of optimization trials (default: 10)
+  gpt_model: "gpt-4.1-mini"  # Model to use (default: "gpt-5-nano")
+
+# logging:
+#   out_dir: runs/rbfopt_test

@@ -2,7 +2,11 @@
 *.log
 runs/
 runs_back/
-back_up/test_2_trials/
+back_up_batch/
+scripts/
+smac3_output/
+rbfopt_learning_guide.md
+test_debug_svb.py
 *.csv
 
 # Python
