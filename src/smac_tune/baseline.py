@@ -28,35 +28,29 @@ _smac = _import_third_party_smac()
 HyperparameterOptimizationFacade = _smac.HyperparameterOptimizationFacade
 Scenario = _smac.Scenario
 
-from utilities.logs import per_instance_T_infty
+from utilities.log_utils import per_instance_T_infty, diagnose_t_infty, format_t_infty_diagnostic
 from utilities.scoring import r_hat_ratio
 from .space import build_configspace
 
 
-def evaluate_config_rhat(cfg: Dict[str, Any], instances: List[str], runner_fn, tau: float,
-                         tinf_base: Dict[str, float]) -> Tuple[float, List[Dict[str, Any]], Dict[str, float]]:
-    per_m: Dict[str, Dict[str, Any]] = {}
-    per_logs: List[Dict[str, Any]] = []
-    for inst in instances:
-        out = runner_fn(cfg, inst, tau)
-        name = Path(inst).stem
-        per_m[name] = out
-        per_logs.append({"instance": inst, **out})
-    tinf_cand = per_instance_T_infty(per_m, tau=tau)
-    rhat = r_hat_ratio(tinf_cand, tinf_base, cap=1e3)
-    return float(rhat), per_logs, tinf_cand
-
-
-def run_smac(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str], tau: float,
+def run_smac(whitelist: List[Dict[str, Any]], instance: str, runner_fn, tau: float,
              tinf_base: Dict[str, float],
              n_trials: int = 100, seed: int = 0, out_dir: str = "./runs", tag: str = "smac"
              ) -> Tuple[Dict[str, Any], float, pd.DataFrame, Dict[str, float]]:
     cs, _ = build_configspace(whitelist)
 
-    def objective(cfg: CS.Configuration) -> float:
+    def objective(cfg: CS.Configuration, seed: int = 0) -> float:
         d = {k: cfg[k] for k in cfg}
-        rhat, _ = evaluate_config_rhat(d, instances, runner_fn, tau, tinf_base)[:2]
+        out = runner_fn(d, instance, tau)
+        name = Path(instance).stem
+        per_m = {name: out}
+        tinf_cand = per_instance_T_infty(per_m, tau=tau)
+        rhat = r_hat_ratio(tinf_cand, tinf_base, cap=1e3)
         return float(rhat)
+
+    # Check if SMAC has verbose logging options
+    import logging
+    logging.basicConfig(level=logging.INFO)
 
     scenario = Scenario(cs, n_trials=int(n_trials), seed=int(seed), deterministic=True)
     smac = HyperparameterOptimizationFacade(scenario, objective)
@@ -66,7 +60,14 @@ def run_smac(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str], t
     total_time = time.time() - start
 
     best_dict = {k: incumbent[k] for k in incumbent}
-    best_L, per_logs, tinf_best = evaluate_config_rhat(best_dict, instances, runner_fn, tau, tinf_base)
+
+    # Evaluate best config
+    out = runner_fn(best_dict, instance, tau)
+    name = Path(instance).stem
+    per_m = {name: out}
+    per_logs = [{"instance": instance, **out}]
+    tinf_best = per_instance_T_infty(per_m, tau=tau)
+    best_L = r_hat_ratio(tinf_best, tinf_base, cap=1e3)
 
     trials_df = pd.DataFrame([{"trial": -1, "r_hat": float(best_L), "config": json.dumps(best_dict), "total_time": total_time}])
 
@@ -125,7 +126,6 @@ def run_smac(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str], t
             "per_instance_csv": str(out / "per_instance.csv"),
             "tinf_candidate": str(out / "tinf_candidate.json"),
             "tinf_baseline": str(out / "tinf_baseline.json"),
-            "train_count": len(instances),
             "tau": float(tau),
             "total_time": float(total_time),
         }

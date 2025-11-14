@@ -120,7 +120,9 @@ def extract_log_samples(log_text: str, tau_c: float = None) -> List[Dict[str, An
 
 def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
                              tau_c: float = 60.0,
-                             eps: float = 1e-4) -> Dict[str, Any]:
+                             eps: float = 1e-6,
+                             debug: bool = False,
+                             range_factor: float = 2.0) -> Dict[str, Any]:
     """
     Implement L1 MINLP optimization from paper equation (4):
 
@@ -146,13 +148,49 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
     if len(samples) < 2:
         return {"error": "insufficient_samples", "samples": len(samples)}
 
-    # Select valid samples T ⊆ {1,...,n} from terminal phase
-    # Following paper: use last samples, cap at |T| = min{⌊0.1*n⌋, 100}
+    # Filter samples by unique gaps (from last to first)
     n = len(samples)
-    max_samples = min(int(0.1 * n), 100)
-    selected_samples = samples[-max_samples:] if n >= 10 else samples
+    unique_gap_samples = []
+    seen_gaps = set()
 
-    print(f"📊 L1 MINLP: Using {len(selected_samples)}/{n} terminal-phase samples")
+    # Go from last to first, only pick samples with unique gaps
+    for sample in reversed(samples):
+        gap = sample.get('g_i', 0)
+        if gap not in seen_gaps:
+            unique_gap_samples.append(sample)
+            seen_gaps.add(gap)
+
+    # Reverse to maintain chronological order
+    unique_gap_samples.reverse()
+
+    # Check if we have enough unique gap samples (at least 10% of total)
+    min_required = max(int(0.1 * n), 2)  # At least 10% or minimum 2 samples
+    if len(unique_gap_samples) < min_required:
+        print(f"L1 MINLP: Insufficient unique gap samples {len(unique_gap_samples)}/{n} (need ≥{min_required})")
+        return {"error": "insufficient_unique_gaps", "samples": len(unique_gap_samples), "required": min_required}
+
+    # Use up to 10% of total samples, but from the unique gap samples
+    max_samples = min(int(0.1 * n), len(unique_gap_samples), 100)
+    selected_samples = unique_gap_samples[-max_samples:]  # Take most recent unique gap samples
+
+    print(f"L1 MINLP: Using {len(selected_samples)}/{len(unique_gap_samples)} unique gap samples ({len(unique_gap_samples)}/{n} total unique)")
+    print(f"Sample times: [{', '.join(f'{s.get('t_i', 0):.1f}' for s in selected_samples)}]")
+
+    if debug:
+        print(f"\n=== L1 MINLP Debug: Sample Details ===")
+        print(f"Sample | Time(s) | Processed | Remaining | Gap    | b̂_i formula")
+        print(f"-------|---------|-----------|-----------|--------|-------------")
+        for i, sample in enumerate(selected_samples):
+            t_i = sample.get('t_i', 0)
+            e_i = sample['e_i']
+            u_i = sample['u_i']
+            g_i = sample['g_i']
+            if abs(g_i) < 1e-12:
+                b_hat_formula = f"e_i + u_i = {e_i:.0f} + {u_i:.0f} = {e_i + u_i:.0f}"
+            else:
+                b_hat_formula = f"e_i + u_i*x^{g_i:.3f} = {e_i:.0f} + {u_i:.0f}*x^{g_i:.3f}"
+            print(f"   {i:3} | {t_i:7.1f} | {e_i:9.0f} | {u_i:9.0f} | {g_i:6.3f} | {b_hat_formula}")
+        print(f"=== End Sample Details ===\n")
 
     try:
         # Create SCIP model for L1 MINLP optimization
@@ -167,7 +205,8 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
         # Auxiliary variables z_i for L1 norm linearization
         z = [m.addVar(name=f"z_{i}", vtype="C", lb=0.0) for i in range(len(selected_samples))]
 
-        # L1 norm constraints: z_i ≥ |b - b̂_i(x)|
+        # Compute b̂_i expressions for all samples
+        b_hat_exprs = []
         for i, sample in enumerate(selected_samples):
             e_i = sample['e_i']
             u_i = sample['u_i']
@@ -180,23 +219,37 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
                 # General case: b̂_i(x) = e_i + u_i * x^{g_i}
                 b_hat_i = e_i + u_i * (x ** g_i)
 
-            # Linearized absolute value constraints
+            b_hat_exprs.append(b_hat_i)
+
+        # L1 norm constraints: z_i ≥ |b - b̂_i(x)|
+        for i, b_hat_i in enumerate(b_hat_exprs):
             m.addCons(z[i] >= b - b_hat_i, name=f"abs_pos_{i}")
             m.addCons(z[i] >= b_hat_i - b, name=f"abs_neg_{i}")
+
+        # Range constraints: prevent b̂_i estimates from being too different
+        # For each pair (i,j): b̂_j ≤ range_factor * b̂_i and b̂_j ≥ b̂_i / range_factor
+        for i in range(len(b_hat_exprs)):
+            for j in range(i + 1, len(b_hat_exprs)):
+                b_hat_i = b_hat_exprs[i]
+                b_hat_j = b_hat_exprs[j]
+                # b̂_j ≤ range_factor * b̂_i
+                m.addCons(b_hat_j <= range_factor * b_hat_i, name=f"range_upper_{i}_{j}")
+                # b̂_j ≥ b̂_i / range_factor  =>  range_factor * b̂_j ≥ b̂_i
+                m.addCons(range_factor * b_hat_j >= b_hat_i, name=f"range_lower_{i}_{j}")
 
         # Objective: minimize Σ z_i (L1 discrepancy)
         m.setObjective(quicksum(z), "minimize")
 
         # Solver settings following paper's numerical requirements
-        m.setRealParam("numerics/feastol", 1e-3)
-        m.setRealParam("numerics/epsilon", 1e-4)
-        m.setRealParam("numerics/sumepsilon", 1e-3)
-        m.setRealParam("limits/gap", 1e-2)
-        m.setRealParam("limits/absgap", 1e-1)
+        m.setRealParam("numerics/feastol", 1e-6)
+        m.setRealParam("numerics/epsilon", 1e-6)
+        m.setRealParam("numerics/sumepsilon", 1e-6)
+        m.setRealParam("limits/gap", 1e-6)        # Much tighter gap tolerance
+        m.setRealParam("limits/absgap", 1e-3)     # Much tighter absolute gap
         m.setRealParam("limits/time", tau_c)  # 60s time limit as in paper
-        m.setIntParam("display/verblevel", 0)
+        m.setIntParam("display/verblevel", 4 if debug else 0)  # Show detailed output when debug=True
         m.setBoolParam("misc/catchctrlc", False)
-        m.setIntParam("presolving/maxrounds", 5)
+        m.setIntParam("presolving/maxrounds", 10)  # More presolving rounds for better accuracy
 
         # Solve L1 MINLP
         m.optimize()
@@ -209,6 +262,33 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
 
             # Compute growth factor φ = x_star
             phi_star = x_star
+
+            if debug:
+                print(f"\n=== L1 MINLP Debug: Optimization Results ===")
+                print(f"Status: {status}")
+                print(f"x_star (growth factor): {x_star:.6f}")
+                print(f"b_star (predicted total nodes): {b_star:.1f}")
+                print(f"obj_val (L1 discrepancy): {obj_val:.3f}")
+                print(f"\n=== |b - b̂_i(x*)| terms ===")
+                print(f"Sample | b̂_i(x*) | |b - b̂_i(x*)| | Contribution")
+                print(f"-------|---------|-------------|-------------")
+                total_discrepancy = 0
+                for i, sample in enumerate(selected_samples):
+                    e_i = sample['e_i']
+                    u_i = sample['u_i']
+                    g_i = sample['g_i']
+
+                    if abs(g_i) < 1e-12:
+                        b_hat_i = e_i + u_i
+                    else:
+                        b_hat_i = e_i + u_i * (x_star ** g_i)
+
+                    discrepancy = abs(b_star - b_hat_i)
+                    total_discrepancy += discrepancy
+                    print(f"   {i:3} | {b_hat_i:7.1f} | {discrepancy:11.3f} | {discrepancy/obj_val*100:8.1f}%")
+
+                print(f"       |         | {total_discrepancy:11.3f} | {100.0:8.1f}%")
+                print(f"=== End L1 Debug ===\n")
 
             return {
                 "x_star": x_star,      # Fitted growth parameter
@@ -230,7 +310,7 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
         return {"error": "solver_exception", "message": str(e)}
 
 
-def estimate_theta_hat(log_text: str, summary: Dict[str, Any], window: int = 5) -> float:
+def estimate_theta_hat(log_text: str, summary: Dict[str, Any], window: int = None) -> float:
     """
     Estimate θ̂(p,i;E,τ) - empirical time per processed node from terminal phase.
 
@@ -240,7 +320,7 @@ def estimate_theta_hat(log_text: str, summary: Dict[str, Any], window: int = 5) 
     Args:
         log_text: SCIP solver log content
         summary: Summary dict with solve_time, n_nodes
-        window: Number of terminal rows for estimation
+        window: Number of terminal rows for estimation (None = use last 10% of samples)
 
     Returns:
         θ̂ (time per node) estimate
@@ -255,9 +335,16 @@ def estimate_theta_hat(log_text: str, summary: Dict[str, Any], window: int = 5) 
                   and math.isfinite(float(r["time"])) and math.isfinite(float(r["node"]))]
 
     if len(valid_rows) >= 2:
-        # Use terminal window for θ̂ estimation
-        k = max(2, min(window, len(valid_rows)))
-        tail = valid_rows[-k:]
+        # Use last 10% of terminal samples or specified window for θ̂ estimation
+        if window is None:
+            # Use last 10% of valid rows (terminal phase samples)
+            n = len(valid_rows)
+            max_samples = min(int(0.1 * n), 100)
+            tail = valid_rows[-max_samples:] if n >= 10 else valid_rows
+        else:
+            # Use specified window (backward compatibility)
+            k = max(2, min(window, len(valid_rows)))
+            tail = valid_rows[-k:]
 
         t0 = float(tail[0]["time"])
         tn = float(tail[-1]["time"])
@@ -276,7 +363,7 @@ def estimate_theta_hat(log_text: str, summary: Dict[str, Any], window: int = 5) 
     return (t / b) if b > 0 else max(t, 1e-9)
 
 
-def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, Any]) -> Dict[str, Any]:
+def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, Any], debug: bool = False) -> Dict[str, Any]:
     """
     Compute T̂_∞(p;i,E,τ) surrogate from paper definition:
 
@@ -298,27 +385,29 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
     # Check if instance was solved (gap = 0)
     primal = summary.get("primal")
     dual = summary.get("dual")
+    gap_final = None
 
     try:
         if primal is not None and dual is not None:
             gap_final = abs(float(primal) - float(dual))
             if gap_final <= 1e-12:  # Solved case
                 t_obs = float(summary.get("solve_time", tau))
+                # Instance solved optimally - return exact time
                 return {
                     "T_infinity": t_obs,
                     "solved": True,
                     "gap_final": 0.0,
                     "method": "exact_time"
                 }
-    except Exception:
+    except Exception as e:
+        # Error checking solution status
         pass
-
-    # Unsolved case: estimate T̂_∞ using SVB model
 
     # Extract samples for SVB fitting
     samples = extract_log_samples(log_text)
+
     if len(samples) < 2:
-        # Insufficient data: return large constant to keep ratios finite
+        # Insufficient samples - using fallback
         return {
             "T_infinity": 1e9,
             "solved": False,
@@ -327,8 +416,9 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
         }
 
     # Fit SVB growth factor using L1 MINLP
-    svb_result = fit_svb_growth_factor_l1(samples)
+    svb_result = fit_svb_growth_factor_l1(samples, debug=debug, range_factor=2.0)
     if svb_result.get("error"):
+        # SVB fitting failed - return T_infinity = 1e9 as requested
         return {
             "T_infinity": 1e9,
             "solved": False,
@@ -336,24 +426,47 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
             "method": "fallback_constant"
         }
 
-    # Estimate θ̂ from terminal phase
+    # Get b̂ from SVB result
+    b_hat = svb_result["b_star"]
+
+    # Get b_last_sample (final processed nodes)
+    samples = extract_log_samples(log_text)
+    if samples:
+        b_last_sample = samples[-1]['e_i']  # e_i is cumulative processed nodes
+    else:
+        b_last_sample = float(summary.get("n_nodes", 0.0) or 0.0)
+
+    # Calculate θ̂ (theta_hat) - empirical time per processed node
     theta_hat = estimate_theta_hat(log_text, summary)
 
-    # Compute T̂_∞ = max{τ, θ̂ · b̂}
-    b_hat = svb_result["b_star"]
-    T_raw = theta_hat * b_hat
-    T_infinity = max(float(tau), T_raw)
+    # Compute T̂_∞ = τ + θ̂ × max{b̂ - b_last_sample, 0}
+    remaining_nodes = max(b_hat - b_last_sample, 0.0)
+    T_infinity = float(tau) + theta_hat * remaining_nodes
+
+    # Compact output exactly as requested
+    gap_str = f", Final gap: {gap_final:.1f}" if gap_final is not None else ""
+    print(f"Solution bounds: primal={primal}, dual={dual}{gap_str}", flush=True)
+    print(f"  Extracted {len(samples)} log samples for SVB fitting, samples_used: {svb_result.get('samples_used', 'N/A')}", flush=True)
+    print(f"  b_hat (predicted total nodes): {b_hat:.6f}", flush=True)
+    print(f"  phi_star (growth factor): {svb_result.get('phi_star', 'N/A')}", flush=True)
+    print(f"  Current processed nodes: {b_last_sample}", flush=True)
+    print(f"  theta_hat: {theta_hat:.6f} seconds per node", flush=True)
+    print(f"  Final T_infinity computation:", flush=True)
+    print(f"    Remaining nodes: max({b_hat:.1f} - {b_last_sample}, 0) = {remaining_nodes:.1f}", flush=True)
+    print(f"    T_infinity = {tau} + {theta_hat:.6f} * {remaining_nodes:.1f} = {T_infinity:.2f}s", flush=True)
 
     return {
         "T_infinity": T_infinity,
         "solved": False,
-        "theta_hat": theta_hat,
         "b_hat": b_hat,
+        "b_last_sample": b_last_sample,
+        "remaining_nodes": remaining_nodes,
+        "theta_hat": theta_hat,
         "phi_star": svb_result.get("phi_star"),
         "x_star": svb_result.get("x_star"),
         "svb_objective": svb_result.get("objective"),
         "samples_used": svb_result.get("samples_used"),
-        "method": "svb_extrapolation"
+        "method": "new_formula_tau_plus_theta_times_remaining"
     }
 
 
@@ -375,6 +488,11 @@ def compute_geometric_mean_ratio(T_p: Dict[str, float], T_q: Dict[str, float],
     Returns:
         Geometric mean ratio R̂(p,q)
     """
+    print("Computing R_hat geometric mean ratio...", flush=True)
+    print(f"  T_p (candidate): {T_p}", flush=True)
+    print(f"  T_q (baseline): {T_q}", flush=True)
+    print(f"  Cap: {cap}", flush=True)
+
     log_ratios = []
 
     for instance in T_p:
@@ -384,15 +502,21 @@ def compute_geometric_mean_ratio(T_p: Dict[str, float], T_q: Dict[str, float],
 
             if t_p > 0 and t_q > 0 and math.isfinite(t_p) and math.isfinite(t_q):
                 # Apply cap inside logarithm as per paper
-                log_ratio = min(math.log(t_p) - math.log(t_q), math.log(cap))
+                raw_log_ratio = math.log(t_p) - math.log(t_q)
+                log_ratio = min(raw_log_ratio, math.log(cap))
+                print(f"  Instance {instance}: T_p={t_p:.2f}, T_q={t_q:.2f}, ratio={t_p/t_q:.4f}, log_ratio={log_ratio:.6f}", flush=True)
                 log_ratios.append(log_ratio)
 
     if not log_ratios:
+        print("  No valid comparisons found - returning infinity", flush=True)
         return float('inf')  # No valid comparisons
 
     # Geometric mean: exp(1/|I| Σ log_ratios)
     mean_log_ratio = sum(log_ratios) / len(log_ratios)
-    return math.exp(mean_log_ratio)
+    r_hat = math.exp(mean_log_ratio)
+    print(f"  Mean log ratio: {mean_log_ratio:.6f}", flush=True)
+    print(f"  Final R_hat = exp({mean_log_ratio:.6f}) = {r_hat:.6f}", flush=True)
+    return r_hat
 
 
 # Legacy compatibility functions (keep existing API) - L1 ONLY

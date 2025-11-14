@@ -2,45 +2,25 @@ from typing import Dict, Any, List, Tuple
 import json, time
 import pandas as pd
 from pathlib import Path
-import sys, os, importlib, site
+import sys, os
 
-# Avoid name collision with this package's own module 'rbfopt'.
-# Dynamically import the third-party 'rbfopt' from site-packages.
-def _import_third_party_rbfopt():
-    """Import the pip-installed 'rbfopt' by temporarily removing this project's 'src' and the local package from sys.modules.
+# Import the third-party rbfopt package (no naming conflict anymore)
+import rbfopt
 
-    This allows 'import rbfopt' to resolve to site-packages even though we have a local package named 'rbfopt'.
-    """
-    # Compute this repo's src path
-    repo_src = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    # Save and modify sys.path and sys.modules
-    orig_path = list(sys.path)
-    orig_mod = sys.modules.get('rbfopt')
-    try:
-        # Remove our src from path if present
-        try:
-            sys.path.remove(repo_src)
-        except ValueError:
-            pass
-        # Drop the local package binding so import finds site-packages
-        if 'rbfopt' in sys.modules:
-            del sys.modules['rbfopt']
-        return importlib.import_module('rbfopt')
-    finally:
-        # Restore sys.path (do not restore sys.modules['rbfopt'] to avoid re-shadowing during this module's lifetime)
-        sys.path[:] = orig_path
-
-rbfopt = _import_third_party_rbfopt()
-
-from utilities.logs import per_instance_T_infty
+from utilities.log_utils import per_instance_T_infty, diagnose_t_infty, format_t_infty_diagnostic
 from utilities.scoring import r_hat_ratio
-from utilities.est_time import diagnose_t_infty, format_t_infty_diagnostic
 
 
-def run_rbfopt(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str], tau: float,
+def run_rbfopt(whitelist: List[Dict[str, Any]], runner_fn, instance: str, tau: float,
                tinf_base: Dict[str, float],
                max_evaluations: int = 100, seed: int = 0, out_dir: str = "./runs", tag: str = "rbfopt"
                ) -> Tuple[Dict[str, Any], float, pd.DataFrame, Dict[str, float]]:
+    print(f"# RBFOpt Optimization Log")
+    print(f"# Instance: {Path(instance).stem}")
+    print(f"# Max evaluations: {max_evaluations}")
+    print(f"# Seed: {seed}")
+    print(f"# Tau: {tau}\n")
+
     # Build RBFOpt variable space
     dim = len(whitelist)
     var_lower = []; var_upper = []; var_type = []; types = []; name_list = []; cat_maps = []
@@ -53,7 +33,11 @@ def run_rbfopt(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str],
         else: raise ValueError(f"Unknown type {t}")
 
     class BB(rbfopt.RbfoptUserBlackBox):
-        def __init__(self): super().__init__(dim, var_lower, var_upper, var_type, self.evaluate)
+        def __init__(self):
+            super().__init__(dim, var_lower, var_upper, var_type, self.evaluate)
+            self.eval_count = 0
+            self.best_result = None
+            self.best_config = None
         def _decode(self, x):
             d = {}
             for idx, v in enumerate(x):
@@ -63,26 +47,81 @@ def run_rbfopt(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str],
                 elif t == "bool": d[name] = bool(int(round(v)))
                 elif t == "cat": _, choices = cat_maps[idx]; d[name] = choices[int(round(v))]
             return d
-        def evaluate(self, x, is_integer):
+        def evaluate(self, x, is_integer=None):
+            self.eval_count += 1
+            if self.eval_count > max_evaluations:
+                return float('inf')  # Stop if exceeded max evaluations
+
             cfg = self._decode(x)
-            per_m: Dict[str, Dict[str, Any]] = {}
-            for inst in instances:
-                out = runner_fn(cfg, inst, tau)
-                name = Path(inst).stem
-                per_m[name] = out
+
+            print(f"\n### EVALUATION {self.eval_count}/{max_evaluations} ###")
+            print(f"Running SCIP with tau={tau}s...")
+
+            out = runner_fn(cfg, instance, tau)
+            name = Path(instance).stem
+            per_m = {name: out}
+
+            # Get detailed T_infinity computation info
+            from utilities.est_time import compute_t_infinity_surrogate, extract_log_samples
+            log_path = out.get("log_path", "")
+            est_result = {}
+            terminal_times = []
+            if log_path and os.path.exists(log_path):
+                with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                    log_text = f.read()
+                est_result = compute_t_infinity_surrogate(log_text, tau, out)
+
+                # Extract terminal sample times
+                samples = extract_log_samples(log_text)
+                if samples:
+                    # Get last 10% of samples as terminal times
+                    terminal_count = max(1, len(samples) // 10)
+                    terminal_samples = samples[-terminal_count:]
+                    terminal_times = [s.get('t_i', 0) for s in terminal_samples]
+
             tinf_cand = per_instance_T_infty(per_m, tau=tau)
+            baseline_tinf = tinf_base.get(name, tau)
+            candidate_tinf = tinf_cand.get(name, tau)
             rhat = r_hat_ratio(tinf_cand, tinf_base, cap=1e3)
+
+            print(f"Final R_hat: {rhat:.4f}")
+
+            # Track best result for final output
+            if self.best_result is None or rhat < float(self.best_result.get('r_hat', float('inf'))):
+                self.best_result = {
+                    'r_hat': rhat,
+                    'scip_result': out,
+                    'instance': instance,
+                    'cfg': cfg
+                }
+                self.best_config = cfg
+
             return float(rhat)
 
     # rbfopt 4.x uses 'rand_seed' instead of 'random_seed'
+    print(f"Starting RBFOpt optimization: {dim}D parameter space")
+    print("RBFOpt optimization starting...")
+
+    # Suppress RBFOpt's verbose output
+    import sys
+    import contextlib
+    from io import StringIO
+
     settings = rbfopt.RbfoptSettings(max_evaluations=int(max_evaluations), rand_seed=int(seed))
     bb = BB(); algo = rbfopt.RbfoptAlgorithm(settings, bb)
 
     start = time.time()
+    # Allow all output including T_infinity debug prints to show
     best_val, best_x, iters, evals, _ = algo.optimize()
     total_time = time.time() - start
+    print(f"\nRBFOpt completed: {min(evals, max_evaluations)} evaluations in {iters} iterations ({total_time:.1f}s total)")
 
     best_cfg = bb._decode(best_x); best_L = float(best_val)
+    print(f"\n=== OPTIMIZATION SUMMARY ===")
+    print(f"Best R_hat: {best_L:.4f}")
+    print(f"Best configuration: {best_cfg}")
+    print(f"Total optimization time: {total_time:.1f}s")
+
     trials_df = pd.DataFrame([{"trial": -1, "r_hat": float(best_L), "config": json.dumps(best_cfg), "total_time": total_time}])
 
     out = Path(out_dir) / f"{tag}_{int(time.time())}"
@@ -90,13 +129,19 @@ def run_rbfopt(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str],
     (out / "best_config.json").write_text(json.dumps(best_cfg, indent=2))
     (out / "best_R_hat.txt").write_text(str(best_L))
 
-    per_m = {}
-    per_logs = []
-    for inst in instances:
-        out = runner_fn(best_cfg, inst, tau)
-        name = Path(inst).stem
-        per_m[name] = out
-        per_logs.append({"instance": inst, **out})
+    # Use the actual best result from the optimization evaluations
+    name = Path(instance).stem
+    if bb.best_result:
+        final_result = bb.best_result['scip_result']
+        print(f"\nUsing best evaluation result:")
+        print(f"  Best R_hat: {bb.best_result['r_hat']:.4f}")
+        print(f"  From config: {bb.best_result['cfg']}")
+    else:
+        # Fallback if no best result tracked
+        final_result = {"status": "no_evaluations", "solve_time": 0, "log_path": ""}
+
+    per_m = {name: final_result}
+    per_logs = [{"instance": instance, **final_result}]
     (out / "per_instance.json").write_text(json.dumps(per_logs, indent=2))
     tinf_best = per_instance_T_infty(per_m, tau=tau)
     (out / "tinf_candidate.json").write_text(json.dumps(tinf_best, indent=2))
@@ -147,7 +192,6 @@ def run_rbfopt(whitelist: List[Dict[str, Any]], runner_fn, instances: List[str],
             "per_instance_csv": str(out / "per_instance.csv"),
             "tinf_candidate": str(out / "tinf_candidate.json"),
             "tinf_baseline": str(out / "tinf_baseline.json"),
-            "train_count": len(instances),
             "tau": float(tau),
             "total_time": float(total_time),
         }

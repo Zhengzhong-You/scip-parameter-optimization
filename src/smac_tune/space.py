@@ -8,11 +8,11 @@ def build_configspace(wl: List[Dict[str, Any]]) -> Tuple[CS.ConfigurationSpace, 
     for item in wl:
         name = item["name"]; typ = item["type"]
         if typ == "float":
-            hp = CS.hyperparameters.FloatHyperparameter(
+            hp = CS.hyperparameters.UniformFloatHyperparameter(
                 name, lower=float(item["lower"]), upper=float(item["upper"]), log=bool(item.get("log", False))
             )
         elif typ == "int":
-            hp = CS.hyperparameters.IntegerHyperparameter(name, lower=int(item["lower"]), upper=int(item["upper"]))
+            hp = CS.hyperparameters.UniformIntegerHyperparameter(name, lower=int(item["lower"]), upper=int(item["upper"]))
         elif typ == "bool":
             choices = item.get("choices", [False, True])
             hp = CS.hyperparameters.CategoricalHyperparameter(name, choices=[bool(x) for x in choices])

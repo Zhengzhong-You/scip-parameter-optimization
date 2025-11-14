@@ -18,7 +18,6 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any, List, Callable
 
-from .datasets import discover_instances, train_test_split_by_fraction
 from .whitelist import get_typed_whitelist
 from .runner import run_instance as scip_run
 from .logs import per_instance_T_infty
@@ -40,20 +39,18 @@ def create_runner_function(out_dir: str, tau: float):
     return runner_fn
 
 
-def compute_baseline_t_infinity(instances: List[str], tau: float, out_dir: str) -> Dict[str, float]:
+def compute_baseline_t_infinity(instance: str, tau: float, out_dir: str) -> Dict[str, float]:
     """Compute baseline T_infinity for default parameters."""
-    per_base = {}
-    for pth in instances:
-        nm = os.path.splitext(os.path.basename(pth))[0]
-        outdir_i = os.path.join(out_dir, nm)
-        # Baseline is trial 0 so naming matches LLM rules
-        res = scip_run(pth, params={}, time_limit=tau, outdir=outdir_i, trial_id=0)
-        per_base[nm] = res
+    nm = os.path.splitext(os.path.basename(instance))[0]
+    outdir_i = os.path.join(out_dir, nm)
+    # Baseline is trial 0 so naming matches LLM rules
+    res = scip_run(instance, params={}, time_limit=tau, outdir=outdir_i, trial_id=0)
+    per_base = {nm: res}
     return per_instance_T_infty(per_base, tau=tau)
 
 
 def save_results(best_cfg: Dict[str, Any], best_rhat: float, tinf_best: Dict[str, float],
-                 tinf_base: Dict[str, float], instances: List[str], tau: float,
+                 tinf_base: Dict[str, float], instance: str, tau: float,
                  out_dir: str, method: str, total_time: float = 0.0):
     """Save optimization results in unified format."""
     out = Path(out_dir)
@@ -80,13 +77,10 @@ def save_results(best_cfg: Dict[str, Any], best_rhat: float, tinf_best: Dict[str
 
     # Re-run with best config to get detailed logs
     runner_fn = create_runner_function(out_dir, tau)
-    per_m = {}
-    per_logs = []
-    for inst in instances:
-        result = runner_fn(best_cfg, inst, tau)
-        name = Path(inst).stem
-        per_m[name] = result
-        per_logs.append({"instance": inst, **result})
+    result = runner_fn(best_cfg, instance, tau)
+    name = Path(instance).stem
+    per_m = {name: result}
+    per_logs = [{"instance": instance, **result}]
 
     (out / "per_instance.json").write_text(json.dumps(_to_jsonable(per_logs), indent=2))
     (out / "tinf_candidate.json").write_text(json.dumps(tinf_best, indent=2))
@@ -151,7 +145,6 @@ def save_results(best_cfg: Dict[str, Any], best_rhat: float, tinf_best: Dict[str
             "per_instance_csv": str(out / "per_instance.csv"),
             "tinf_candidate": str(out / "tinf_candidate.json"),
             "tinf_baseline": str(out / "tinf_baseline.json"),
-            "train_count": len(instances),
             "tau": float(tau),
             "total_time": float(total_time),
         }
@@ -180,10 +173,10 @@ def run_single_instance_optimization(method: str, optimizer_func: Callable,
         raise SystemExit(f"Unsupported whitelist regime: {whitelist_regime}")
     wl = get_typed_whitelist(regime=whitelist_regime)
 
-    # Always use a single provided instance (no train/test semantics)
+    # Single instance optimization
     if not os.path.exists(instance_path):
         raise SystemExit(f"Instance not found: {instance_path}")
-    instances = [os.path.abspath(instance_path)]
+    instance = os.path.abspath(instance_path)
 
     tau = float(cfg["runner"]["tau"])
 
@@ -191,7 +184,7 @@ def run_single_instance_optimization(method: str, optimizer_func: Callable,
     os.makedirs("runs", exist_ok=True)
 
     ts = int(_time.time())
-    inst_name = os.path.splitext(os.path.basename(instances[0]))[0]
+    inst_name = os.path.splitext(os.path.basename(instance))[0]
     out_run = os.path.join("runs", f"{method}_{inst_name}")
 
     # Clean existing run dir to ensure fresh runs
@@ -202,19 +195,19 @@ def run_single_instance_optimization(method: str, optimizer_func: Callable,
     runner_fn = create_runner_function(out_run, tau)
 
     # Compute baseline T_infinity
-    tinf_base = compute_baseline_t_infinity(instances, tau, out_run)
+    tinf_base = compute_baseline_t_infinity(instance, tau, out_run)
 
     # Run optimization
     if method == "smac":
         best_cfg, best_rhat, _, tinf_best = optimizer_func(
-            wl, instances, runner_fn, tau, tinf_base,
+            wl, instance, runner_fn, tau, tinf_base,
             n_trials=cfg.get("smac", {}).get("n_trials", 10),
             seed=cfg.get("smac", {}).get("seed", 0),
             out_dir=out_run
         )
     elif method == "rbfopt":
         best_cfg, best_rhat, _, tinf_best = optimizer_func(
-            wl, runner_fn, instances, tau, tinf_base,
+            wl, runner_fn, instance, tau, tinf_base,
             max_evaluations=cfg.get("rbfopt", {}).get("max_evaluations", 10),
             seed=cfg.get("rbfopt", {}).get("seed", 0),
             out_dir=out_run,
@@ -223,7 +216,7 @@ def run_single_instance_optimization(method: str, optimizer_func: Callable,
     elif method == "solvermind":
         # SolverMind uses similar parameters to SMAC
         best_cfg, best_rhat, _, tinf_best = optimizer_func(
-            wl, instances, runner_fn, tau, tinf_base,
+            wl, instance, runner_fn, tau, tinf_base,
             n_trials=cfg.get("solvermind", {}).get("n_trials", 10),
             seed=cfg.get("solvermind", {}).get("seed", 0),
             out_dir=out_run,

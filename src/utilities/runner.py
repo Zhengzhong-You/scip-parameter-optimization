@@ -106,12 +106,22 @@ def run_instance(instance_path: str, params: Dict[str, Any], time_limit: float, 
 
     start = time.time()
     try:
-        proc = subprocess.run([
-            os.environ.get("SCIP_BIN", "scip"), "-s", set_path
-        ], input=script.encode("utf-8"), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, check=False)
-        out_text = proc.stdout.decode("utf-8", errors="replace")
         with open(log_path, "w", encoding="utf-8", errors="ignore") as lf:
-            lf.write(out_text)
+            proc = subprocess.Popen([
+                os.environ.get("SCIP_BIN", "scip"), "-s", set_path
+            ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+               text=True, bufsize=1, universal_newlines=True)
+
+            # Send script input
+            proc.stdin.write(script)
+            proc.stdin.close()
+
+            # Stream output line by line with real-time flushing
+            for line in proc.stdout:
+                lf.write(line)
+                lf.flush()  # Force flush to disk immediately
+
+            proc.wait()
     except FileNotFoundError:
         raise RuntimeError("SCIP CLI not found. Ensure 'scip' is in PATH or set SCIP_BIN to the SCIP binary path.")
     end = time.time()
