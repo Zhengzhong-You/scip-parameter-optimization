@@ -266,9 +266,23 @@ def install_linux_dependencies(pkg_manager):
             print_info("You may need to run manually: sudo apt-get install -y " + " ".join(packages))
 
         # SCIP typically needs to be built from source or installed from COIN-OR
-        print_warning("\nSCIP 9.2.4 needs to be installed manually on Linux")
-        print_info("Option 1: Build from source: https://scipopt.org/")
-        print_info("Option 2: Use conda: conda install -c conda-forge scip=9.2.4")
+        # Install SCIP 9.2.4 via conda
+        print_info("\nInstalling SCIP 9.2.4...")
+        if shutil.which("conda"):
+            print_info("Found conda - installing SCIP 9.2.4 from conda-forge...")
+            scip_cmd = "conda install -c conda-forge scip=9.2.4 -y"
+            if run_command(scip_cmd, "Install SCIP 9.2.4 via conda", check=False):
+                print_success("SCIP 9.2.4 installed successfully via conda")
+            else:
+                print_warning("Failed to install SCIP via conda")
+                print_info("You may need to install SCIP manually:")
+                print_info("  conda install -c conda-forge scip=9.2.4")
+        else:
+            print_warning("conda not found - cannot install SCIP automatically")
+            print_info("Please install conda first, then run:")
+            print_info("  conda install -c conda-forge scip=9.2.4")
+            print_info("Or build from source: https://scipopt.org/")
+
         print_info("Continuing with Python environment setup...")
 
     elif pkg_manager in ["yum", "dnf"]:
@@ -353,9 +367,23 @@ def install_linux_dependencies(pkg_manager):
             print_info("Please ensure you have sudo privileges and try again.")
             return False
 
-        print_warning("\nSCIP 9.2.4 needs to be installed manually on Linux")
-        print_info("Option 1: Build from source: https://scipopt.org/")
-        print_info("Option 2: Use conda: conda install -c conda-forge scip=9.2.4")
+        # Install SCIP 9.2.4 via conda
+        print_info("\nInstalling SCIP 9.2.4...")
+        if shutil.which("conda"):
+            print_info("Found conda - installing SCIP 9.2.4 from conda-forge...")
+            scip_cmd = "conda install -c conda-forge scip=9.2.4 -y"
+            if run_command(scip_cmd, "Install SCIP 9.2.4 via conda", check=False):
+                print_success("SCIP 9.2.4 installed successfully via conda")
+            else:
+                print_warning("Failed to install SCIP via conda")
+                print_info("You may need to install SCIP manually:")
+                print_info("  conda install -c conda-forge scip=9.2.4")
+        else:
+            print_warning("conda not found - cannot install SCIP automatically")
+            print_info("Please install conda first, then run:")
+            print_info("  conda install -c conda-forge scip=9.2.4")
+            print_info("Or build from source: https://scipopt.org/")
+
         print_info("Continuing with Python environment setup...")
 
     else:
