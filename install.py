@@ -99,19 +99,55 @@ def get_platform_info():
             "supported": True
         }
     elif system == "Linux":
-        # Detect Linux distribution
+        # Detect Linux distribution with multiple methods
+        pkg_mgr = "unknown"
+
+        # Method 1: Check for distribution-specific files
         if Path("/etc/debian_version").exists():
             pkg_mgr = "apt"
         elif Path("/etc/redhat-release").exists():
             pkg_mgr = "yum"
-        else:
-            pkg_mgr = "unknown"
+        elif Path("/etc/fedora-release").exists():
+            pkg_mgr = "yum"
+        elif Path("/etc/SuSE-release").exists() or Path("/etc/SUSE-release").exists():
+            pkg_mgr = "zypper"
+        elif Path("/etc/arch-release").exists():
+            pkg_mgr = "pacman"
+
+        # Method 2: Try using os-release (standard on most modern Linux distros)
+        if pkg_mgr == "unknown" and Path("/etc/os-release").exists():
+            try:
+                with open("/etc/os-release") as f:
+                    os_release = f.read().lower()
+                    if any(distro in os_release for distro in ["ubuntu", "debian", "mint"]):
+                        pkg_mgr = "apt"
+                    elif any(distro in os_release for distro in ["rhel", "centos", "fedora", "red hat"]):
+                        pkg_mgr = "yum"
+                    elif "suse" in os_release:
+                        pkg_mgr = "zypper"
+                    elif "arch" in os_release:
+                        pkg_mgr = "pacman"
+            except:
+                pass
+
+        # Method 3: Check which package manager commands exist
+        if pkg_mgr == "unknown":
+            if shutil.which("apt-get"):
+                pkg_mgr = "apt"
+            elif shutil.which("yum"):
+                pkg_mgr = "yum"
+            elif shutil.which("dnf"):
+                pkg_mgr = "dnf"
+            elif shutil.which("zypper"):
+                pkg_mgr = "zypper"
+            elif shutil.which("pacman"):
+                pkg_mgr = "pacman"
 
         return {
             "os": "Linux",
             "package_manager": pkg_mgr,
             "python_cmd": "python3.11",
-            "supported": pkg_mgr != "unknown"
+            "supported": pkg_mgr in ["apt", "yum", "dnf"]
         }
     else:
         return {
@@ -234,8 +270,9 @@ def install_linux_dependencies(pkg_manager):
         print_info("Option 2: Use conda: conda install -c conda-forge scip=9.2.4")
         print_info("Continuing with Python environment setup...")
 
-    elif pkg_manager == "yum":
-        print_info("Using yum package manager (RedHat/CentOS/Fedora)")
+    elif pkg_manager in ["yum", "dnf"]:
+        mgr_cmd = "dnf" if pkg_manager == "dnf" else "yum"
+        print_info(f"Using {mgr_cmd} package manager (RedHat/CentOS/Fedora)")
 
         packages = [
             "python311",
@@ -254,14 +291,24 @@ def install_linux_dependencies(pkg_manager):
         ]
 
         print("\nInstalling required packages...")
-        cmd = f"sudo yum install -y {' '.join(packages)}"
-        if not run_command(cmd, "Install yum packages"):
+        cmd = f"sudo {mgr_cmd} install -y {' '.join(packages)}"
+        if not run_command(cmd, f"Install {mgr_cmd} packages"):
             print_warning("Some packages may not have installed correctly")
 
         print_warning("\nSCIP 9.2.4 needs to be installed manually on Linux")
         print_info("Option 1: Build from source: https://scipopt.org/")
         print_info("Option 2: Use conda: conda install -c conda-forge scip=9.2.4")
         print_info("Continuing with Python environment setup...")
+
+    else:
+        print_warning(f"Package manager '{pkg_manager}' is not fully supported")
+        print_info("You'll need to manually install:")
+        print_info("  - Python 3.11+")
+        print_info("  - Python development headers (python3.11-dev)")
+        print_info("  - Build tools (gcc, g++, make, gfortran)")
+        print_info("  - SWIG")
+        print_info("  - Development libraries (GMP, readline, zlib, bzip2, LAPACK, BLAS)")
+        print_info("  - SCIP 9.2.4")
 
     return True
 
