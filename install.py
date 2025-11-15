@@ -266,20 +266,76 @@ def install_linux_dependencies(pkg_manager):
             print_info("You may need to run manually: sudo apt-get install -y " + " ".join(packages))
 
         # SCIP typically needs to be built from source or installed from COIN-OR
-        # Install SCIP 9.2.4 via conda
+        # Install SCIP 9.2.4 - try conda first, then build from source
         print_info("\nInstalling SCIP 9.2.4...")
+        scip_installed = False
+
+        # Try conda first if available
         if shutil.which("conda"):
-            print_info("Found conda - installing SCIP 9.2.4 from conda-forge...")
+            print_info("Found conda - trying to install SCIP 9.2.4 from conda-forge...")
             scip_cmd = "conda install -c conda-forge scip=9.2.4 -y"
             if run_command(scip_cmd, "Install SCIP 9.2.4 via conda", check=False):
-                print_success("SCIP 9.2.4 installed successfully via conda")
+                # Verify SCIP is actually in PATH
+                if shutil.which("scip"):
+                    print_success("SCIP 9.2.4 installed successfully via conda")
+                    scip_installed = True
+                else:
+                    print_warning("Conda install succeeded but SCIP not in PATH")
             else:
                 print_warning("Failed to install SCIP via conda")
+
+        # If conda failed or not available, build from source
+        if not scip_installed:
+            print_info("\nBuilding SCIP 9.2.4 from source...")
+            print_info("This will take 5-10 minutes...")
+
+            # Create build directory
+            build_dir = Path.home() / "scip_build"
+            build_dir.mkdir(exist_ok=True)
+
+            # Download SCIP 9.2.4
+            scip_url = "https://github.com/scipopt/scip/archive/refs/tags/v924.tar.gz"
+            scip_tar = build_dir / "scip-9.2.4.tar.gz"
+            scip_src = build_dir / "scip-924"
+
+            print_info(f"Downloading SCIP 9.2.4 to {build_dir}...")
+            download_cmd = f"cd {build_dir} && wget -O scip-9.2.4.tar.gz {scip_url}"
+            if not run_command(download_cmd, "Download SCIP 9.2.4", check=False):
+                print_error("Failed to download SCIP")
                 print_info("You may need to install SCIP manually:")
-                print_info("  conda install -c conda-forge scip=9.2.4")
-        else:
-            print_warning("conda not found - cannot install SCIP automatically")
-            print_info("Please install conda first, then run:")
+                print_info("  Download from: https://scipopt.org/")
+            else:
+                # Extract
+                print_info("Extracting SCIP source...")
+                extract_cmd = f"cd {build_dir} && tar xzf scip-9.2.4.tar.gz"
+                if run_command(extract_cmd, "Extract SCIP", check=False):
+                    # Build and install
+                    print_info("Building SCIP (this takes 5-10 minutes)...")
+                    build_commands = [
+                        f"cd {scip_src} && mkdir -p build",
+                        f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local",
+                        f"cd {scip_src}/build && make -j$(nproc)",
+                        f"cd {scip_src}/build && sudo make install"
+                    ]
+
+                    build_success = True
+                    for cmd in build_commands:
+                        if not run_command(cmd, f"Build step: {cmd.split('&&')[-1].strip()}", check=False):
+                            build_success = False
+                            break
+
+                    if build_success:
+                        print_success("SCIP 9.2.4 built and installed successfully!")
+                        scip_installed = True
+                    else:
+                        print_error("Failed to build SCIP from source")
+                        print_info("You may need to install dependencies or try manually:")
+                        print_info("  https://scipopt.org/doc/html/INSTALL.php")
+
+        if not scip_installed:
+            print_warning("\nSCIP installation incomplete")
+            print_info("The framework will still work but you need SCIP to run optimizations")
+            print_info("You can install SCIP later with:")
             print_info("  conda install -c conda-forge scip=9.2.4")
             print_info("Or build from source: https://scipopt.org/")
 
@@ -367,20 +423,76 @@ def install_linux_dependencies(pkg_manager):
             print_info("Please ensure you have sudo privileges and try again.")
             return False
 
-        # Install SCIP 9.2.4 via conda
+        # Install SCIP 9.2.4 - try conda first, then build from source
         print_info("\nInstalling SCIP 9.2.4...")
+        scip_installed = False
+
+        # Try conda first if available
         if shutil.which("conda"):
-            print_info("Found conda - installing SCIP 9.2.4 from conda-forge...")
+            print_info("Found conda - trying to install SCIP 9.2.4 from conda-forge...")
             scip_cmd = "conda install -c conda-forge scip=9.2.4 -y"
             if run_command(scip_cmd, "Install SCIP 9.2.4 via conda", check=False):
-                print_success("SCIP 9.2.4 installed successfully via conda")
+                # Verify SCIP is actually in PATH
+                if shutil.which("scip"):
+                    print_success("SCIP 9.2.4 installed successfully via conda")
+                    scip_installed = True
+                else:
+                    print_warning("Conda install succeeded but SCIP not in PATH")
             else:
                 print_warning("Failed to install SCIP via conda")
+
+        # If conda failed or not available, build from source
+        if not scip_installed:
+            print_info("\nBuilding SCIP 9.2.4 from source...")
+            print_info("This will take 5-10 minutes...")
+
+            # Create build directory
+            build_dir = Path.home() / "scip_build"
+            build_dir.mkdir(exist_ok=True)
+
+            # Download SCIP 9.2.4
+            scip_url = "https://github.com/scipopt/scip/archive/refs/tags/v924.tar.gz"
+            scip_tar = build_dir / "scip-9.2.4.tar.gz"
+            scip_src = build_dir / "scip-924"
+
+            print_info(f"Downloading SCIP 9.2.4 to {build_dir}...")
+            download_cmd = f"cd {build_dir} && wget -O scip-9.2.4.tar.gz {scip_url}"
+            if not run_command(download_cmd, "Download SCIP 9.2.4", check=False):
+                print_error("Failed to download SCIP")
                 print_info("You may need to install SCIP manually:")
-                print_info("  conda install -c conda-forge scip=9.2.4")
-        else:
-            print_warning("conda not found - cannot install SCIP automatically")
-            print_info("Please install conda first, then run:")
+                print_info("  Download from: https://scipopt.org/")
+            else:
+                # Extract
+                print_info("Extracting SCIP source...")
+                extract_cmd = f"cd {build_dir} && tar xzf scip-9.2.4.tar.gz"
+                if run_command(extract_cmd, "Extract SCIP", check=False):
+                    # Build and install
+                    print_info("Building SCIP (this takes 5-10 minutes)...")
+                    build_commands = [
+                        f"cd {scip_src} && mkdir -p build",
+                        f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local",
+                        f"cd {scip_src}/build && make -j$(nproc)",
+                        f"cd {scip_src}/build && sudo make install"
+                    ]
+
+                    build_success = True
+                    for cmd in build_commands:
+                        if not run_command(cmd, f"Build step: {cmd.split('&&')[-1].strip()}", check=False):
+                            build_success = False
+                            break
+
+                    if build_success:
+                        print_success("SCIP 9.2.4 built and installed successfully!")
+                        scip_installed = True
+                    else:
+                        print_error("Failed to build SCIP from source")
+                        print_info("You may need to install dependencies or try manually:")
+                        print_info("  https://scipopt.org/doc/html/INSTALL.php")
+
+        if not scip_installed:
+            print_warning("\nSCIP installation incomplete")
+            print_info("The framework will still work but you need SCIP to run optimizations")
+            print_info("You can install SCIP later with:")
             print_info("  conda install -c conda-forge scip=9.2.4")
             print_info("Or build from source: https://scipopt.org/")
 
