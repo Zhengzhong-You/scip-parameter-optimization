@@ -263,6 +263,7 @@ def install_linux_dependencies(pkg_manager):
         cmd = f"sudo apt-get install -y {' '.join(packages)}"
         if not run_command(cmd, "Install apt packages"):
             print_warning("Some packages may not have installed correctly")
+            print_info("You may need to run manually: sudo apt-get install -y " + " ".join(packages))
 
         # SCIP typically needs to be built from source or installed from COIN-OR
         print_warning("\nSCIP 9.2.4 needs to be installed manually on Linux")
@@ -274,26 +275,83 @@ def install_linux_dependencies(pkg_manager):
         mgr_cmd = "dnf" if pkg_manager == "dnf" else "yum"
         print_info(f"Using {mgr_cmd} package manager (RedHat/CentOS/Fedora)")
 
-        packages = [
-            "python311",
-            "python311-devel",
-            "gcc",
-            "gcc-c++",
-            "make",
-            "swig",
-            "gmp-devel",
-            "readline-devel",
-            "zlib-devel",
-            "bzip2-devel",
-            "lapack-devel",
-            "blas-devel",
-            "gcc-gfortran"
+        # Check if EPEL repository is needed (for SWIG on older RHEL/CentOS)
+        if mgr_cmd == "yum":
+            print_info("Enabling EPEL repository (required for SWIG and other packages)...")
+            epel_cmd = "sudo yum install -y epel-release"
+            run_command(epel_cmd, "Install EPEL repository", check=False)
+
+        # Define packages with alternatives for different RHEL/CentOS versions
+        package_groups = [
+            (["python3.11", "python311", "python3"], "Python 3.11"),
+            (["python3.11-devel", "python311-devel", "python3-devel"], "Python development headers"),
+            (["gcc"], "GCC compiler"),
+            (["gcc-c++"], "G++ compiler"),
+            (["make"], "Make"),
+            (["swig"], "SWIG"),
+            (["gmp-devel"], "GMP development"),
+            (["readline-devel"], "Readline development"),
+            (["zlib-devel"], "Zlib development"),
+            (["bzip2-devel"], "Bzip2 development"),
+            (["lapack-devel"], "LAPACK development"),
+            (["blas-devel"], "BLAS development"),
+            (["gcc-gfortran"], "Fortran compiler"),
         ]
 
-        print("\nInstalling required packages...")
-        cmd = f"sudo {mgr_cmd} install -y {' '.join(packages)}"
-        if not run_command(cmd, f"Install {mgr_cmd} packages"):
-            print_warning("Some packages may not have installed correctly")
+        print("\nInstalling required packages (trying alternatives if needed)...")
+
+        installed_count = 0
+        failed_packages = []
+
+        for pkg_alternatives, description in package_groups:
+            installed = False
+            for pkg in pkg_alternatives:
+                # First check if already installed
+                check_cmd = f"{mgr_cmd} list installed {pkg} 2>/dev/null"
+                check_result = subprocess.run(check_cmd, shell=True, capture_output=True, text=True)
+
+                if check_result.returncode == 0:
+                    print_success(f"{description}: {pkg} (already installed)")
+                    installed = True
+                    installed_count += 1
+                    break
+
+                # Try to install
+                install_cmd = f"sudo {mgr_cmd} install -y {pkg}"
+                result = subprocess.run(install_cmd, shell=True, capture_output=True, text=True, timeout=300)
+
+                if result.returncode == 0:
+                    print_success(f"{description}: {pkg} installed")
+                    installed = True
+                    installed_count += 1
+                    break
+                else:
+                    # Try next alternative
+                    continue
+
+            if not installed:
+                print_warning(f"{description}: Not found (tried: {', '.join(pkg_alternatives)})")
+                failed_packages.append(description)
+
+        print(f"\nInstalled {installed_count}/{len(package_groups)} package groups")
+
+        if failed_packages:
+            print_warning(f"\nFailed to install: {', '.join(failed_packages)}")
+            print_info("These packages may not be available in your repositories")
+
+        # Check critical packages
+        critical_ok = True
+        if not shutil.which("gcc"):
+            print_error("GCC compiler not found - required for building Python packages")
+            critical_ok = False
+        if not shutil.which("swig"):
+            print_error("SWIG not found - required for pyrfr (SMAC dependency)")
+            critical_ok = False
+
+        if not critical_ok:
+            print_error("\nCritical packages missing! Installation cannot continue.")
+            print_info("Please ensure you have sudo privileges and try again.")
+            return False
 
         print_warning("\nSCIP 9.2.4 needs to be installed manually on Linux")
         print_info("Option 1: Build from source: https://scipopt.org/")
@@ -393,12 +451,32 @@ def install_python_packages(venv_name):
         print_error("requirements.txt not found in current directory")
         return False
 
+    # Check for SWIG before attempting pyrfr installation
+    if not shutil.which("swig"):
+        print_error("SWIG is not installed - required for pyrfr (SMAC dependency)")
+        print_info("Please install SWIG first:")
+        print_info("  RHEL/CentOS/Fedora: sudo yum install -y swig")
+        print_info("  Debian/Ubuntu: sudo apt-get install -y swig")
+        print_info("  Conda: conda install -c conda-forge swig")
+        print_info("\nAttempting to install packages anyway (some may fail)...")
+
     print("This may take several minutes (especially compiling scipy, scikit-learn, pyrfr)...")
-    if not run_command(
+    result = run_command(
         f"{venv_name}/bin/pip install -r requirements.txt",
-        "Install Python packages from requirements.txt"
-    ):
+        "Install Python packages from requirements.txt",
+        check=False
+    )
+
+    if not result:
         print_error("Failed to install Python packages")
+        print_info("\nCommon causes and solutions:")
+        print_info("  1. Missing SWIG: Install swig package (see above)")
+        print_info("  2. Missing compilers: Install gcc, g++, gfortran")
+        print_info("  3. Missing development headers: Install python3.11-dev(el)")
+        print_info("  4. Missing libraries: Install gmp-devel, blas-devel, lapack-devel")
+        print_info("\nTo retry after fixing dependencies:")
+        print_info(f"  source {venv_name}/bin/activate")
+        print_info(f"  pip install -r requirements.txt")
         return False
 
     return True
