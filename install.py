@@ -299,8 +299,16 @@ def install_linux_dependencies(pkg_manager):
             scip_src = build_dir / "scip-924"
 
             print_info(f"Downloading SCIP 9.2.4 to {build_dir}...")
-            download_cmd = f"cd {build_dir} && wget -O scip-9.2.4.tar.gz {scip_url}"
-            if not run_command(download_cmd, "Download SCIP 9.2.4", check=False):
+            # Try wget first, then curl as fallback
+            if shutil.which("wget"):
+                download_cmd = f"cd {build_dir} && wget -O scip-9.2.4.tar.gz {scip_url}"
+            elif shutil.which("curl"):
+                download_cmd = f"cd {build_dir} && curl -L -o scip-9.2.4.tar.gz {scip_url}"
+            else:
+                print_error("Neither wget nor curl found - cannot download SCIP")
+                download_cmd = None
+
+            if not download_cmd or not run_command(download_cmd, "Download SCIP 9.2.4", check=False):
                 print_error("Failed to download SCIP")
                 print_info("You may need to install SCIP manually:")
                 print_info("  Download from: https://scipopt.org/")
@@ -326,7 +334,35 @@ def install_linux_dependencies(pkg_manager):
 
                     if build_success:
                         print_success("SCIP 9.2.4 built and installed successfully!")
-                        scip_installed = True
+
+                        # Update library cache so SCIP libraries are found
+                        print_info("Updating library cache...")
+                        run_command("sudo ldconfig", "Update ldconfig", check=False)
+
+                        # Add /usr/local/bin to PATH if SCIP is there but not in PATH
+                        if not shutil.which("scip") and Path("/usr/local/bin/scip").exists():
+                            print_info("Adding /usr/local/bin to PATH...")
+                            os.environ["PATH"] = f"/usr/local/bin:{os.environ.get('PATH', '')}"
+
+                            # Also add to user's .bashrc for future sessions
+                            bashrc = Path.home() / ".bashrc"
+                            path_export = 'export PATH=/usr/local/bin:$PATH'
+                            try:
+                                with open(bashrc, 'r') as f:
+                                    content = f.read()
+                                if path_export not in content:
+                                    with open(bashrc, 'a') as f:
+                                        f.write(f'\n# Added by SCIP installer\n{path_export}\n')
+                                    print_info("Added /usr/local/bin to ~/.bashrc")
+                            except:
+                                pass
+
+                        # Verify SCIP is now accessible
+                        if shutil.which("scip") or Path("/usr/local/bin/scip").exists():
+                            print_success("SCIP is now accessible")
+                            scip_installed = True
+                        else:
+                            print_warning("SCIP built but not found - may need manual PATH update")
                     else:
                         print_error("Failed to build SCIP from source")
                         print_info("You may need to install dependencies or try manually:")
@@ -456,8 +492,16 @@ def install_linux_dependencies(pkg_manager):
             scip_src = build_dir / "scip-924"
 
             print_info(f"Downloading SCIP 9.2.4 to {build_dir}...")
-            download_cmd = f"cd {build_dir} && wget -O scip-9.2.4.tar.gz {scip_url}"
-            if not run_command(download_cmd, "Download SCIP 9.2.4", check=False):
+            # Try wget first, then curl as fallback
+            if shutil.which("wget"):
+                download_cmd = f"cd {build_dir} && wget -O scip-9.2.4.tar.gz {scip_url}"
+            elif shutil.which("curl"):
+                download_cmd = f"cd {build_dir} && curl -L -o scip-9.2.4.tar.gz {scip_url}"
+            else:
+                print_error("Neither wget nor curl found - cannot download SCIP")
+                download_cmd = None
+
+            if not download_cmd or not run_command(download_cmd, "Download SCIP 9.2.4", check=False):
                 print_error("Failed to download SCIP")
                 print_info("You may need to install SCIP manually:")
                 print_info("  Download from: https://scipopt.org/")
@@ -483,7 +527,35 @@ def install_linux_dependencies(pkg_manager):
 
                     if build_success:
                         print_success("SCIP 9.2.4 built and installed successfully!")
-                        scip_installed = True
+
+                        # Update library cache so SCIP libraries are found
+                        print_info("Updating library cache...")
+                        run_command("sudo ldconfig", "Update ldconfig", check=False)
+
+                        # Add /usr/local/bin to PATH if SCIP is there but not in PATH
+                        if not shutil.which("scip") and Path("/usr/local/bin/scip").exists():
+                            print_info("Adding /usr/local/bin to PATH...")
+                            os.environ["PATH"] = f"/usr/local/bin:{os.environ.get('PATH', '')}"
+
+                            # Also add to user's .bashrc for future sessions
+                            bashrc = Path.home() / ".bashrc"
+                            path_export = 'export PATH=/usr/local/bin:$PATH'
+                            try:
+                                with open(bashrc, 'r') as f:
+                                    content = f.read()
+                                if path_export not in content:
+                                    with open(bashrc, 'a') as f:
+                                        f.write(f'\n# Added by SCIP installer\n{path_export}\n')
+                                    print_info("Added /usr/local/bin to ~/.bashrc")
+                            except:
+                                pass
+
+                        # Verify SCIP is now accessible
+                        if shutil.which("scip") or Path("/usr/local/bin/scip").exists():
+                            print_success("SCIP is now accessible")
+                            scip_installed = True
+                        else:
+                            print_warning("SCIP built but not found - may need manual PATH update")
                     else:
                         print_error("Failed to build SCIP from source")
                         print_info("You may need to install dependencies or try manually:")
