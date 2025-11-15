@@ -357,12 +357,33 @@ def install_linux_dependencies(pkg_manager):
                             except:
                                 pass
 
-                        # Verify SCIP is now accessible
-                        if shutil.which("scip") or Path("/usr/local/bin/scip").exists():
-                            print_success("SCIP is now accessible")
+                        # Verify SCIP is now accessible and report its location
+                        scip_locations = [
+                            "/usr/local/bin/scip",
+                            "/usr/bin/scip",
+                            str(Path.home() / "miniconda3/bin/scip"),
+                            str(Path.home() / "anaconda3/bin/scip"),
+                        ]
+
+                        found_at = None
+                        for loc in scip_locations:
+                            if Path(loc).exists():
+                                found_at = loc
+                                break
+
+                        if shutil.which("scip"):
+                            scip_in_path = shutil.which("scip")
+                            print_success(f"SCIP is in PATH at: {scip_in_path}")
+                            scip_installed = True
+                        elif found_at:
+                            print_success(f"SCIP installed at: {found_at}")
+                            print_info(f"Not in PATH, but will be found by patched scip_cli.py")
                             scip_installed = True
                         else:
-                            print_warning("SCIP built but not found - may need manual PATH update")
+                            print_warning("SCIP built but not found at expected locations")
+                            print_info("Checked locations:")
+                            for loc in scip_locations:
+                                print_info(f"  - {loc}")
                     else:
                         print_error("Failed to build SCIP from source")
                         print_info("You may need to install dependencies or try manually:")
@@ -550,12 +571,33 @@ def install_linux_dependencies(pkg_manager):
                             except:
                                 pass
 
-                        # Verify SCIP is now accessible
-                        if shutil.which("scip") or Path("/usr/local/bin/scip").exists():
-                            print_success("SCIP is now accessible")
+                        # Verify SCIP is now accessible and report its location
+                        scip_locations = [
+                            "/usr/local/bin/scip",
+                            "/usr/bin/scip",
+                            str(Path.home() / "miniconda3/bin/scip"),
+                            str(Path.home() / "anaconda3/bin/scip"),
+                        ]
+
+                        found_at = None
+                        for loc in scip_locations:
+                            if Path(loc).exists():
+                                found_at = loc
+                                break
+
+                        if shutil.which("scip"):
+                            scip_in_path = shutil.which("scip")
+                            print_success(f"SCIP is in PATH at: {scip_in_path}")
+                            scip_installed = True
+                        elif found_at:
+                            print_success(f"SCIP installed at: {found_at}")
+                            print_info(f"Not in PATH, but will be found by patched scip_cli.py")
                             scip_installed = True
                         else:
-                            print_warning("SCIP built but not found - may need manual PATH update")
+                            print_warning("SCIP built but not found at expected locations")
+                            print_info("Checked locations:")
+                            for loc in scip_locations:
+                                print_info(f"  - {loc}")
                     else:
                         print_error("Failed to build SCIP from source")
                         print_info("You may need to install dependencies or try manually:")
@@ -825,6 +867,9 @@ def patch_scip_cli():
         "/usr/bin/scip",
         os.path.expanduser("~/miniconda3/bin/scip"),
         os.path.expanduser("~/anaconda3/bin/scip"),
+        os.path.expanduser("~/.local/bin/scip"),
+        "./scip",  # Current directory
+        "../scip", # Parent directory
     ]
 
     for location in common_locations:
