@@ -4,18 +4,23 @@ SCIP Parameter Optimization Framework - Installation Script
 
 This script automates the installation process including:
 1. Checking system requirements
-2. Installing Homebrew dependencies (Python 3.11+, SCIP 9.2.4, SWIG)
+2. Installing dependencies (Python 3.11+, SCIP 9.2.4, SWIG)
 3. Creating virtual environment
 4. Installing Python packages
 5. Running verification tests
 
+Supported Platforms:
+- macOS (via Homebrew)
+- Linux (via apt/yum package managers)
+
 Usage:
-    python3 install.py [--venv-name scip_env] [--skip-brew] [--test-only]
+    python3 install.py [--venv-name scip_env] [--skip-system-deps] [--test-only]
 """
 
 import argparse
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -53,6 +58,11 @@ def print_error(message):
     print(f"{Colors.RED}✗ {message}{Colors.END}")
 
 
+def print_info(message):
+    """Print an info message"""
+    print(f"{Colors.BLUE}ℹ {message}{Colors.END}")
+
+
 def run_command(cmd, description, check=True, capture_output=False):
     """Run a shell command with error handling"""
     print(f"Running: {description}...")
@@ -77,98 +87,221 @@ def run_command(cmd, description, check=True, capture_output=False):
         return False
 
 
+def get_platform_info():
+    """Detect platform and return relevant information"""
+    system = platform.system()
+
+    if system == "Darwin":
+        return {
+            "os": "macOS",
+            "package_manager": "brew",
+            "python_cmd": "/usr/local/bin/python3.11",
+            "supported": True
+        }
+    elif system == "Linux":
+        # Detect Linux distribution
+        if Path("/etc/debian_version").exists():
+            pkg_mgr = "apt"
+        elif Path("/etc/redhat-release").exists():
+            pkg_mgr = "yum"
+        else:
+            pkg_mgr = "unknown"
+
+        return {
+            "os": "Linux",
+            "package_manager": pkg_mgr,
+            "python_cmd": "python3.11",
+            "supported": pkg_mgr != "unknown"
+        }
+    else:
+        return {
+            "os": system,
+            "package_manager": "unknown",
+            "python_cmd": "python3",
+            "supported": False
+        }
+
+
 def check_platform():
     """Check if the platform is supported"""
     print_section("Checking Platform")
-    system = platform.system()
-    print(f"Detected platform: {system}")
 
-    if system != "Darwin":
-        print_error("This installation script is designed for macOS (Darwin).")
-        print_error("For other platforms, please install dependencies manually.")
-        return False
+    platform_info = get_platform_info()
+    print(f"Detected platform: {platform_info['os']}")
+    print(f"Package manager: {platform_info['package_manager']}")
+
+    if not platform_info['supported']:
+        print_error(f"Platform {platform_info['os']} is not automatically supported")
+        print_info("You can still use --skip-system-deps and install dependencies manually")
+        return False, platform_info
 
     print_success("Platform supported")
-    return True
+    return True, platform_info
 
 
-def check_homebrew():
-    """Check if Homebrew is installed"""
-    print_section("Checking Homebrew")
-    try:
-        result = subprocess.run(
-            ["brew", "--version"],
-            capture_output=True, text=True, check=True
-        )
-        version = result.stdout.split('\n')[0]
-        print_success(f"Homebrew is installed: {version}")
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
+def find_python():
+    """Find suitable Python 3.11+ installation"""
+    python_candidates = [
+        "/usr/local/bin/python3.11",
+        "/usr/bin/python3.11",
+        "python3.11",
+        "python3",
+    ]
+
+    for cmd in python_candidates:
+        try:
+            result = subprocess.run(
+                f"{cmd} --version",
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            version_str = result.stdout.strip()
+            # Extract version number
+            version_parts = version_str.split()[1].split('.')
+            major, minor = int(version_parts[0]), int(version_parts[1])
+
+            if major == 3 and minor >= 11:
+                print_success(f"Found suitable Python: {cmd} ({version_str})")
+                return cmd
+            else:
+                print_warning(f"Python version too old: {version_str}")
+        except (subprocess.CalledProcessError, FileNotFoundError, ValueError, IndexError):
+            continue
+
+    return None
+
+
+def install_macos_dependencies():
+    """Install dependencies on macOS via Homebrew"""
+    print_section("Installing macOS Dependencies")
+
+    # Check Homebrew
+    if not shutil.which("brew"):
         print_error("Homebrew is not installed")
-        print("\nTo install Homebrew, run:")
+        print_info("Install Homebrew first:")
         print('/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"')
         return False
 
-
-def install_brew_packages():
-    """Install required Homebrew packages"""
-    print_section("Installing Homebrew Packages")
-
     packages = [
         ("python@3.11", "Python 3.11"),
-        ("scip", "SCIP Optimizer 9.2.4"),
-        ("swig", "SWIG (for pyrfr compilation)")
+        ("scip", "SCIP Optimizer"),
+        ("swig", "SWIG (for pyrfr)")
     ]
 
     for package, description in packages:
         print(f"\nInstalling {description}...")
         if not run_command(f"brew install {package}", f"Install {package}"):
-            print_error(f"Failed to install {package}")
-            return False
+            print_warning(f"Failed to install {package}, it may already be installed")
 
     return True
 
 
-def verify_installations():
-    """Verify Homebrew installations"""
-    print_section("Verifying System Installations")
+def install_linux_dependencies(pkg_manager):
+    """Install dependencies on Linux"""
+    print_section("Installing Linux Dependencies")
 
-    # Check Python 3.11
-    python_version = run_command(
-        "/usr/local/bin/python3.11 --version",
-        "Check Python 3.11 version",
-        capture_output=True
-    )
-    if python_version:
-        print_success(f"Python installed: {python_version}")
+    if pkg_manager == "apt":
+        print_info("Using apt package manager (Debian/Ubuntu)")
+
+        # Update package lists
+        run_command("sudo apt-get update", "Update apt package lists", check=False)
+
+        packages = [
+            "python3.11",
+            "python3.11-venv",
+            "python3.11-dev",
+            "build-essential",
+            "swig",
+            "libgmp-dev",
+            "libreadline-dev",
+            "zlib1g-dev",
+            "libbz2-dev",
+            "liblapack-dev",
+            "libblas-dev",
+            "gfortran"
+        ]
+
+        print("\nInstalling required packages...")
+        cmd = f"sudo apt-get install -y {' '.join(packages)}"
+        if not run_command(cmd, "Install apt packages"):
+            print_warning("Some packages may not have installed correctly")
+
+        # SCIP typically needs to be built from source or installed from COIN-OR
+        print_warning("\nSCIP 9.2.4 needs to be installed manually on Linux")
+        print_info("Option 1: Build from source: https://scipopt.org/")
+        print_info("Option 2: Use conda: conda install -c conda-forge scip=9.2.4")
+        print_info("Continuing with Python environment setup...")
+
+    elif pkg_manager == "yum":
+        print_info("Using yum package manager (RedHat/CentOS/Fedora)")
+
+        packages = [
+            "python311",
+            "python311-devel",
+            "gcc",
+            "gcc-c++",
+            "make",
+            "swig",
+            "gmp-devel",
+            "readline-devel",
+            "zlib-devel",
+            "bzip2-devel",
+            "lapack-devel",
+            "blas-devel",
+            "gcc-gfortran"
+        ]
+
+        print("\nInstalling required packages...")
+        cmd = f"sudo yum install -y {' '.join(packages)}"
+        if not run_command(cmd, "Install yum packages"):
+            print_warning("Some packages may not have installed correctly")
+
+        print_warning("\nSCIP 9.2.4 needs to be installed manually on Linux")
+        print_info("Option 1: Build from source: https://scipopt.org/")
+        print_info("Option 2: Use conda: conda install -c conda-forge scip=9.2.4")
+        print_info("Continuing with Python environment setup...")
+
+    return True
+
+
+def verify_system_dependencies(platform_info):
+    """Verify that system dependencies are installed"""
+    print_section("Verifying System Dependencies")
+
+    all_ok = True
+
+    # Check Python
+    python_cmd = find_python()
+    if python_cmd:
+        version = run_command(f"{python_cmd} --version", "Python version", capture_output=True)
+        print_success(f"Python: {version}")
     else:
-        print_error("Python 3.11 not found")
-        return False
+        print_error("Python 3.11+ not found")
+        all_ok = False
 
     # Check SCIP
-    scip_version = run_command(
-        "scip --version | head -n 1",
-        "Check SCIP version",
-        capture_output=True
-    )
-    if scip_version and "9.2.4" in scip_version:
-        print_success(f"SCIP installed: {scip_version}")
+    if shutil.which("scip"):
+        scip_version = run_command("scip --version | head -n 1", "SCIP version", capture_output=True)
+        if scip_version:
+            print_success(f"SCIP: {scip_version[:80]}")
+            if "9.2.4" not in scip_version:
+                print_warning("SCIP version may not be 9.2.4 (recommended)")
     else:
-        print_warning(f"SCIP version may not be 9.2.4: {scip_version}")
+        print_warning("SCIP not found in PATH - you may need to install it manually")
+        print_info("See: https://scipopt.org/ or use conda: conda install -c conda-forge scip=9.2.4")
 
     # Check SWIG
-    swig_version = run_command(
-        "swig -version | grep 'SWIG Version'",
-        "Check SWIG version",
-        capture_output=True
-    )
-    if swig_version:
-        print_success(f"SWIG installed: {swig_version}")
+    if shutil.which("swig"):
+        swig_version = run_command("swig -version | grep 'SWIG Version'", "SWIG version", capture_output=True)
+        if swig_version:
+            print_success(f"SWIG: {swig_version}")
     else:
-        print_error("SWIG not found")
-        return False
+        print_error("SWIG not found - required for building pyrfr (SMAC dependency)")
+        all_ok = False
 
-    return True
+    return all_ok
 
 
 def create_virtualenv(venv_name):
@@ -182,9 +315,15 @@ def create_virtualenv(venv_name):
         print_warning(f"Removing existing virtual environment: {venv_name}")
         run_command(f"rm -rf {venv_name}", "Remove old venv")
 
+    # Find Python
+    python_cmd = find_python()
+    if not python_cmd:
+        print_error("Could not find Python 3.11+")
+        return False
+
     # Create new venv
     if not run_command(
-        f"/usr/local/bin/python3.11 -m venv {venv_name}",
+        f"{python_cmd} -m venv {venv_name}",
         "Create virtual environment"
     ):
         return False
@@ -207,7 +346,7 @@ def install_python_packages(venv_name):
         print_error("requirements.txt not found in current directory")
         return False
 
-    print("This may take several minutes...")
+    print("This may take several minutes (especially compiling scipy, scikit-learn, pyrfr)...")
     if not run_command(
         f"{venv_name}/bin/pip install -r requirements.txt",
         "Install Python packages from requirements.txt"
@@ -301,36 +440,48 @@ else:
         print(f"  {result}")
     else:
         all_passed = False
+        print_warning("SCIP test failed - ensure SCIP is installed correctly")
 
     return all_passed
 
 
-def print_summary(venv_name):
+def print_summary(venv_name, platform_info):
     """Print installation summary and next steps"""
     print_section("Installation Complete!")
 
     print(f"""
-{Colors.GREEN}✓ All components installed successfully!{Colors.END}
+{Colors.GREEN}✓ Virtual environment and Python packages installed!{Colors.END}
 
 {Colors.BOLD}Installed Components:{Colors.END}
-  • Python 3.11.14
-  • SCIP Optimizer 9.2.4
-  • SWIG (for building extensions)
+  • Python 3.11+ virtual environment
   • Virtual environment: {venv_name}
   • All Python packages from requirements.txt
+
+{Colors.BOLD}System Dependencies (verify these are installed):{Colors.END}
+  • Python 3.11 or later
+  • SCIP Optimizer 9.2.4 (recommended)
+  • SWIG (for building extensions)
 
 {Colors.BOLD}Next Steps:{Colors.END}
 
 1. Activate the virtual environment:
    {Colors.BLUE}source {venv_name}/bin/activate{Colors.END}
 
-2. Run the optimizer (example):
+2. Verify SCIP installation (if not done already):
+   {Colors.BLUE}scip --version{Colors.END}
+
+   If SCIP is not installed, see:
+   - macOS: brew install scip
+   - Linux: Build from source (https://scipopt.org/) or use conda
+   - Conda: conda install -c conda-forge scip=9.2.4
+
+3. Run the optimizer (example):
    {Colors.BLUE}PYTHONPATH=./src python -m utilities.optimizer_cli solvermind \\
        --config configs/experiment.yaml \\
        --whitelist curated \\
        --instance instance/cvrp/mps/example.mps.gz{Colors.END}
 
-3. Deactivate when done:
+4. Deactivate when done:
    {Colors.BLUE}deactivate{Colors.END}
 
 {Colors.BOLD}Available Optimizers:{Colors.END}
@@ -345,7 +496,15 @@ For more information, see README.md
 def main():
     """Main installation workflow"""
     parser = argparse.ArgumentParser(
-        description="Install SCIP Parameter Optimization Framework"
+        description="Install SCIP Parameter Optimization Framework",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python3 install.py                              # Full installation
+  python3 install.py --skip-system-deps           # Only setup Python environment
+  python3 install.py --venv-name my_env           # Custom venv name
+  python3 install.py --test-only                  # Test existing installation
+        """
     )
     parser.add_argument(
         "--venv-name",
@@ -353,9 +512,9 @@ def main():
         help="Name of virtual environment (default: scip_env)"
     )
     parser.add_argument(
-        "--skip-brew",
+        "--skip-system-deps",
         action="store_true",
-        help="Skip Homebrew package installation"
+        help="Skip system dependency installation (Python, SCIP, SWIG)"
     )
     parser.add_argument(
         "--test-only",
@@ -384,21 +543,33 @@ def main():
         sys.exit(0 if success else 1)
 
     # Check platform
-    if not check_platform():
-        sys.exit(1)
+    supported, platform_info = check_platform()
 
-    # Check Homebrew
-    if not args.skip_brew:
-        if not check_homebrew():
+    # Install system dependencies if not skipped
+    if not args.skip_system_deps:
+        if not supported:
+            print_error("Platform not supported for automatic dependency installation")
+            print_info("Use --skip-system-deps to skip this step and install manually")
             sys.exit(1)
 
-        # Install Homebrew packages
-        if not install_brew_packages():
-            sys.exit(1)
+        # Install dependencies based on platform
+        if platform_info['os'] == "macOS":
+            if not install_macos_dependencies():
+                print_error("Failed to install macOS dependencies")
+                sys.exit(1)
+        elif platform_info['os'] == "Linux":
+            if not install_linux_dependencies(platform_info['package_manager']):
+                print_error("Failed to install Linux dependencies")
+                sys.exit(1)
 
         # Verify installations
-        if not verify_installations():
-            sys.exit(1)
+        if not verify_system_dependencies(platform_info):
+            print_warning("Some system dependencies may be missing")
+            print_info("You can continue, but some features may not work")
+    else:
+        print_info("Skipping system dependency installation")
+        # Still verify what's available
+        verify_system_dependencies(platform_info)
 
     # Create virtual environment
     if not create_virtualenv(args.venv_name):
@@ -413,7 +584,7 @@ def main():
         print_warning("Some tests failed, but installation may still be usable")
 
     # Print summary
-    print_summary(args.venv_name)
+    print_summary(args.venv_name, platform_info)
 
 
 if __name__ == "__main__":

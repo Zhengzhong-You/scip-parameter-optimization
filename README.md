@@ -4,7 +4,7 @@ A comprehensive framework for optimizing SCIP solver parameters using multiple o
 
 ## Installation
 
-### Quick Installation (macOS)
+### Quick Installation (macOS and Linux)
 
 The easiest way to install all dependencies is using the automated installation script:
 
@@ -12,13 +12,14 @@ The easiest way to install all dependencies is using the automated installation 
 python3 install.py
 ```
 
-This will:
-1. Install Python 3.11+ via Homebrew
-2. Install SCIP 9.2.4 via Homebrew
-3. Install SWIG (required for pyrfr compilation)
-4. Create a virtual environment named `scip_env`
-5. Install all Python dependencies from `requirements.txt`
-6. Run verification tests
+**What it does:**
+- Detects your platform (macOS or Linux)
+- Installs system dependencies (Python 3.11+, SWIG, build tools)
+- For macOS: Installs SCIP 9.2.4 via Homebrew
+- For Linux: Installs build dependencies (SCIP needs manual installation, see below)
+- Creates a virtual environment named `scip_env`
+- Installs all Python dependencies from `requirements.txt`
+- Runs verification tests
 
 #### Installation Options
 
@@ -26,25 +27,49 @@ This will:
 # Use custom virtual environment name
 python3 install.py --venv-name my_env
 
-# Skip Homebrew installation (if already installed)
-python3 install.py --skip-brew
+# Skip system dependency installation (if already installed)
+python3 install.py --skip-system-deps
 
 # Test existing installation
 python3 install.py --test-only
+```
+
+#### Linux SCIP Installation
+
+On Linux, SCIP needs to be installed separately. Choose one option:
+
+**Option 1: Using Conda (Recommended)**
+```bash
+conda install -c conda-forge scip=9.2.4
+```
+
+**Option 2: Build from Source**
+```bash
+# Download SCIP 9.2.4
+wget https://scipopt.org/download/release/scip-9.2.4.tgz
+tar xzf scip-9.2.4.tgz
+cd scip-9.2.4
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+sudo make install
 ```
 
 ### Manual Installation
 
 #### System Requirements
 
-- **Operating System**: macOS (for automated script), Linux/Windows (manual installation)
-- **Python**: 3.11 or later
+- **Operating System**: macOS or Linux (automated script), Windows (manual installation required)
+- **Python**: 3.11 or later (required for numpy 2.3.4+, scipy 1.16.3+, and other dependencies)
 - **SCIP Optimizer**: Version 9.2.4 (fixed version for reproducibility)
 - **SWIG**: Required for compiling pyrfr (SMAC dependency)
+- **Build Tools**: gcc, g++, make, gfortran (for compiling scientific packages)
 
 #### Step-by-Step Manual Installation
 
-1. **Install Homebrew** (macOS only):
+**On macOS:**
+
+1. **Install Homebrew** (if not already installed):
    ```bash
    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
    ```
@@ -56,9 +81,44 @@ python3 install.py --test-only
    brew install swig      # Required for pyrfr compilation
    ```
 
+**On Linux (Debian/Ubuntu):**
+
+1. **Update package lists**:
+   ```bash
+   sudo apt-get update
+   ```
+
+2. **Install system dependencies**:
+   ```bash
+   sudo apt-get install -y python3.11 python3.11-venv python3.11-dev \
+       build-essential swig libgmp-dev libreadline-dev zlib1g-dev \
+       libbz2-dev liblapack-dev libblas-dev gfortran
+   ```
+
+3. **Install SCIP** (choose one option):
+   ```bash
+   # Option 1: Using Conda
+   conda install -c conda-forge scip=9.2.4
+
+   # Option 2: Build from source (see Linux SCIP Installation section above)
+   ```
+
+**On Linux (RedHat/CentOS/Fedora):**
+
+1. **Install system dependencies**:
+   ```bash
+   sudo yum install -y python311 python311-devel gcc gcc-c++ make swig \
+       gmp-devel readline-devel zlib-devel bzip2-devel \
+       lapack-devel blas-devel gcc-gfortran
+   ```
+
+2. **Install SCIP** (same as Debian/Ubuntu, see above)
+
+**All Platforms:**
+
 3. **Create virtual environment**:
    ```bash
-   /usr/local/bin/python3.11 -m venv scip_env
+   python3.11 -m venv scip_env
    source scip_env/bin/activate
    ```
 
