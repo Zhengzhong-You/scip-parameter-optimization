@@ -782,6 +782,77 @@ else:
     return all_passed
 
 
+def patch_scip_cli():
+    """Patch src/utilities/scip_cli.py to find SCIP in common locations"""
+    print_section("Patching SCIP CLI")
+
+    scip_cli_path = Path("src/utilities/scip_cli.py")
+
+    if not scip_cli_path.exists():
+        print_warning("src/utilities/scip_cli.py not found - skipping patch")
+        return False
+
+    print_info("Updating scip_cli.py to automatically find SCIP...")
+
+    # Read the current file
+    try:
+        with open(scip_cli_path, 'r') as f:
+            content = f.read()
+
+        # Check if already patched
+        if "common_locations" in content:
+            print_success("scip_cli.py already has the fix - skipping")
+            return True
+
+        # Find and replace the old _scip_bin function
+        old_function = '''def _scip_bin() -> str:
+    return os.environ.get("SCIP_BIN", "scip")'''
+
+        new_function = '''def _scip_bin() -> str:
+    """Get SCIP binary path, checking common installation locations."""
+    # First check SCIP_BIN environment variable
+    if "SCIP_BIN" in os.environ:
+        return os.environ["SCIP_BIN"]
+
+    # Check if 'scip' is in PATH
+    scip_path = shutil.which("scip")
+    if scip_path:
+        return scip_path
+
+    # Check common installation locations
+    common_locations = [
+        "/usr/local/bin/scip",
+        "/usr/bin/scip",
+        os.path.expanduser("~/miniconda3/bin/scip"),
+        os.path.expanduser("~/anaconda3/bin/scip"),
+    ]
+
+    for location in common_locations:
+        if os.path.isfile(location) and os.access(location, os.X_OK):
+            return location
+
+    # Fall back to 'scip' and let it fail with a clear error
+    return "scip"'''
+
+        if old_function in content:
+            content = content.replace(old_function, new_function)
+
+            # Write back
+            with open(scip_cli_path, 'w') as f:
+                f.write(content)
+
+            print_success("Successfully patched scip_cli.py")
+            print_info("SCIP will now be automatically detected at /usr/local/bin/scip")
+            return True
+        else:
+            print_warning("Could not find expected function signature - file may have been modified")
+            return False
+
+    except Exception as e:
+        print_error(f"Failed to patch scip_cli.py: {e}")
+        return False
+
+
 def print_summary(venv_name, platform_info):
     """Print installation summary and next steps"""
     print_section("Installation Complete!")
@@ -919,6 +990,9 @@ Examples:
     # Run tests
     if not run_tests(args.venv_name):
         print_warning("Some tests failed, but installation may still be usable")
+
+    # Patch scip_cli.py to find SCIP automatically
+    patch_scip_cli()
 
     # Print summary
     print_summary(args.venv_name, platform_info)
