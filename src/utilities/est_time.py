@@ -174,7 +174,8 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
     selected_samples = unique_gap_samples[-max_samples:]  # Take most recent unique gap samples
 
     print(f"L1 MINLP: Using {len(selected_samples)}/{len(unique_gap_samples)} unique gap samples ({len(unique_gap_samples)}/{n} total unique)")
-    print(f"Sample times: [{', '.join(f'{s.get('t_i', 0):.1f}' for s in selected_samples)}]")
+    sample_times_str = ', '.join(f"{s.get('t_i', 0):.1f}" for s in selected_samples)
+    print(f"Sample times: [{sample_times_str}]")
 
     if debug:
         print(f"\n=== L1 MINLP Debug: Sample Details ===")
