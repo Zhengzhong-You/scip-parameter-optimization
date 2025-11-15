@@ -2,6 +2,90 @@
 
 A comprehensive framework for optimizing SCIP solver parameters using multiple optimization methods including SolverMind (GPT-based), RBFOpt, and SMAC.
 
+## Installation
+
+### Quick Installation (macOS)
+
+The easiest way to install all dependencies is using the automated installation script:
+
+```bash
+python3 install.py
+```
+
+This will:
+1. Install Python 3.11+ via Homebrew
+2. Install SCIP 9.2.4 via Homebrew
+3. Install SWIG (required for pyrfr compilation)
+4. Create a virtual environment named `scip_env`
+5. Install all Python dependencies from `requirements.txt`
+6. Run verification tests
+
+#### Installation Options
+
+```bash
+# Use custom virtual environment name
+python3 install.py --venv-name my_env
+
+# Skip Homebrew installation (if already installed)
+python3 install.py --skip-brew
+
+# Test existing installation
+python3 install.py --test-only
+```
+
+### Manual Installation
+
+#### System Requirements
+
+- **Operating System**: macOS (for automated script), Linux/Windows (manual installation)
+- **Python**: 3.11 or later
+- **SCIP Optimizer**: Version 9.2.4 (fixed version for reproducibility)
+- **SWIG**: Required for compiling pyrfr (SMAC dependency)
+
+#### Step-by-Step Manual Installation
+
+1. **Install Homebrew** (macOS only):
+   ```bash
+   /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+   ```
+
+2. **Install system dependencies**:
+   ```bash
+   brew install python@3.11
+   brew install scip      # This installs SCIP 9.2.4
+   brew install swig      # Required for pyrfr compilation
+   ```
+
+3. **Create virtual environment**:
+   ```bash
+   /usr/local/bin/python3.11 -m venv scip_env
+   source scip_env/bin/activate
+   ```
+
+4. **Install Python packages**:
+   ```bash
+   pip install --upgrade pip
+   pip install -r requirements.txt
+   ```
+
+5. **Verify installation**:
+   ```bash
+   python -c "import pyscipopt; print(f'PySCIPOpt: {pyscipopt.__version__}')"
+   scip --version
+   ```
+
+### Verification
+
+To verify your installation is working correctly:
+
+```bash
+# Activate environment
+source scip_env/bin/activate
+
+# Run test
+python3 install.py --test-only
+```
+
 ## Features
 
 - **Multi-Method Optimization**: Support for SolverMind (LLM-based), RBFOpt, and SMAC optimizers
