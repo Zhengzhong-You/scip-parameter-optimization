@@ -828,13 +828,43 @@ def patch_scip_cli():
     """Patch src/utilities/scip_cli.py to find SCIP in common locations"""
     print_section("Patching SCIP CLI")
 
+    # Debug: Print current working directory
+    cwd = os.getcwd()
+    print_info(f"Current working directory: {cwd}")
+
+    # Debug: Check if SCIP exists in various locations
+    print_info("Checking SCIP locations before patching:")
+    scip_check_locations = [
+        "/usr/local/bin/scip",
+        "/usr/bin/scip",
+        str(Path.home() / "miniconda3/bin/scip"),
+        str(Path.home() / "anaconda3/bin/scip"),
+        str(Path.home() / ".local/bin/scip"),
+        "./scip",
+        "../scip",
+    ]
+
+    for loc in scip_check_locations:
+        if Path(loc).exists():
+            abs_path = Path(loc).resolve()
+            print_success(f"  Found SCIP at: {loc} -> {abs_path}")
+        else:
+            print_info(f"  Not found: {loc}")
+
+    scip_in_path = shutil.which("scip")
+    if scip_in_path:
+        print_success(f"  SCIP in PATH: {scip_in_path}")
+    else:
+        print_warning("  SCIP NOT in PATH")
+
     scip_cli_path = Path("src/utilities/scip_cli.py")
 
     if not scip_cli_path.exists():
-        print_warning("src/utilities/scip_cli.py not found - skipping patch")
+        print_warning(f"src/utilities/scip_cli.py not found at {scip_cli_path.resolve()}")
+        print_info(f"Directory contents: {list(Path('src/utilities').iterdir()) if Path('src/utilities').exists() else 'src/utilities not found'}")
         return False
 
-    print_info("Updating scip_cli.py to automatically find SCIP...")
+    print_info(f"Patching file: {scip_cli_path.resolve()}")
 
     # Read the current file
     try:
@@ -887,7 +917,26 @@ def patch_scip_cli():
                 f.write(content)
 
             print_success("Successfully patched scip_cli.py")
-            print_info("SCIP will now be automatically detected at /usr/local/bin/scip")
+            print_info("SCIP will now be automatically detected in the following order:")
+            print_info("  1. $SCIP_BIN environment variable")
+            print_info("  2. 'scip' in PATH")
+            print_info("  3. /usr/local/bin/scip")
+            print_info("  4. /usr/bin/scip")
+            print_info("  5. ~/miniconda3/bin/scip")
+            print_info("  6. ~/anaconda3/bin/scip")
+            print_info("  7. ~/.local/bin/scip")
+            print_info("  8. ./scip (current directory)")
+            print_info("  9. ../scip (parent directory)")
+
+            # Verify the patch worked by reading back
+            with open(scip_cli_path, 'r') as f:
+                patched_content = f.read()
+
+            if "common_locations" in patched_content:
+                print_success("Patch verification: File successfully updated")
+            else:
+                print_error("Patch verification: WARNING - Patch may not have applied correctly")
+
             return True
         else:
             print_warning("Could not find expected function signature - file may have been modified")
@@ -898,7 +947,7 @@ def patch_scip_cli():
         return False
 
 
-def print_summary(venv_name, platform_info):
+def print_summary(venv_name, platform_info, patch_applied=False):
     """Print installation summary and next steps"""
     print_section("Installation Complete!")
 
@@ -909,6 +958,7 @@ def print_summary(venv_name, platform_info):
   • Python 3.11+ virtual environment
   • Virtual environment: {venv_name}
   • All Python packages from requirements.txt
+  • scip_cli.py patch: {"✓ APPLIED" if patch_applied else "✗ NOT APPLIED"}
 
 {Colors.BOLD}System Dependencies (verify these are installed):{Colors.END}
   • Python 3.11 or later
@@ -1037,10 +1087,26 @@ Examples:
         print_warning("Some tests failed, but installation may still be usable")
 
     # Patch scip_cli.py to find SCIP automatically
-    patch_scip_cli()
+    patch_result = patch_scip_cli()
+
+    # Final verification before summary
+    print_section("Final Verification")
+    print_info(f"Installation directory: {os.getcwd()}")
+    print_info(f"Virtual environment: {Path(args.venv_name).resolve()}")
+
+    # Show what files exist
+    if Path("src/utilities/scip_cli.py").exists():
+        print_success("src/utilities/scip_cli.py exists")
+    else:
+        print_error("src/utilities/scip_cli.py NOT FOUND")
+
+    if Path(args.venv_name).exists():
+        print_success(f"{args.venv_name}/ exists")
+    else:
+        print_error(f"{args.venv_name}/ NOT FOUND")
 
     # Print summary
-    print_summary(args.venv_name, platform_info)
+    print_summary(args.venv_name, platform_info, patch_result)
 
 
 if __name__ == "__main__":
