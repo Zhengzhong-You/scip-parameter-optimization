@@ -2,13 +2,37 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from typing import Dict, Any, Tuple, Optional
 
 
 def _scip_bin() -> str:
-    return os.environ.get("SCIP_BIN", "scip")
+    """Get SCIP binary path, checking common installation locations."""
+    # First check SCIP_BIN environment variable
+    if "SCIP_BIN" in os.environ:
+        return os.environ["SCIP_BIN"]
+
+    # Check if 'scip' is in PATH
+    scip_path = shutil.which("scip")
+    if scip_path:
+        return scip_path
+
+    # Check common installation locations
+    common_locations = [
+        "/usr/local/bin/scip",
+        "/usr/bin/scip",
+        os.path.expanduser("~/miniconda3/bin/scip"),
+        os.path.expanduser("~/anaconda3/bin/scip"),
+    ]
+
+    for location in common_locations:
+        if os.path.isfile(location) and os.access(location, os.X_OK):
+            return location
+
+    # Fall back to 'scip' and let it fail with a clear error
+    return "scip"
 
 
 def run_scip_script(commands: str | list[str], env: Optional[dict[str, str]] = None) -> Tuple[int, str]:
@@ -38,7 +62,14 @@ def scip_version() -> Optional[str]:
 def ensure_version(required: str = "9.2.4") -> None:
     v = scip_version()
     if not v:
-        raise RuntimeError("Unable to determine SCIP version. Ensure SCIP is installed and on PATH (SCIP_BIN or scip).")
+        scip_bin = _scip_bin()
+        raise RuntimeError(
+            f"Unable to determine SCIP version. Tried: {scip_bin}\n"
+            f"Ensure SCIP {required} is installed. You can:\n"
+            f"  - Run: python3 install.py (installs SCIP automatically)\n"
+            f"  - Or install via conda: conda install -c conda-forge scip={required}\n"
+            f"  - Or set SCIP_BIN environment variable to the SCIP binary path"
+        )
     if v != required:
         raise RuntimeError(f"SCIP CLI version mismatch: found {v}, required {required}.")
 
