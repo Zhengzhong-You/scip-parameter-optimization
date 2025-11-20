@@ -33,17 +33,47 @@ def run_cmd(cmd, desc):
     print(f"\033[92m✓ {desc}\033[0m")
 
 
+def install_system_deps():
+    """Install system dependencies"""
+    print("\033[94mInstalling system dependencies...\033[0m")
+
+    # Detect package manager
+    if shutil.which("yum"):
+        # RHEL/CentOS/Fedora
+        run_cmd("sudo yum install -y epel-release", "Enable EPEL repository")
+        packages = [
+            "python3.11", "python3.11-devel", "gcc", "gcc-c++", "make",
+            "wget", "tar", "cmake", "swig", "gmp-devel", "readline-devel",
+            "zlib-devel", "bzip2-devel", "lapack-devel", "blas-devel", "gcc-gfortran"
+        ]
+        run_cmd(f"sudo yum install -y {' '.join(packages)}", "Install YUM packages")
+    elif shutil.which("apt-get"):
+        # Debian/Ubuntu
+        run_cmd("sudo apt-get update", "Update package lists")
+        packages = [
+            "python3.11", "python3.11-dev", "gcc", "g++", "make",
+            "wget", "tar", "cmake", "swig", "libgmp-dev", "libreadline-dev",
+            "zlib1g-dev", "libbz2-dev", "liblapack-dev", "libblas-dev", "gfortran"
+        ]
+        run_cmd(f"sudo apt-get install -y {' '.join(packages)}", "Install APT packages")
+    else:
+        fatal_error("Unsupported package manager - need yum or apt-get")
+
+
 def main():
     """Main installation - source only, no fallbacks"""
     print("\033[1m\033[94m" + "="*60 + "\033[0m")
     print("\033[1m\033[94mSCIP Parameter Optimization - Source Build Only\033[0m")
     print("\033[1m\033[94m" + "="*60 + "\033[0m")
 
-    # Check dependencies
+    # Install system dependencies first
+    install_system_deps()
+
+    # Check dependencies are now available
     deps = ["cmake", "make", "gcc", "g++", "wget", "tar", "python3"]
     for dep in deps:
         if not shutil.which(dep):
-            fatal_error(f"Required dependency missing: {dep}")
+            fatal_error(f"Required dependency still missing after install: {dep}")
     print("\033[92m✓ All dependencies found\033[0m")
 
     # Setup paths
