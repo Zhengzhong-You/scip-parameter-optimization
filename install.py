@@ -42,7 +42,7 @@ def install_system_deps():
         # RHEL/CentOS/Fedora/AnolisOS
         packages = [
             "python3.11", "python3.11-devel", "gcc", "gcc-c++", "make",
-            "wget", "tar", "cmake", "swig", "gmp-devel", "readline-devel",
+            "curl", "tar", "cmake", "swig", "gmp-devel", "readline-devel",
             "zlib-devel", "bzip2-devel", "lapack-devel", "blas-devel", "gcc-gfortran"
         ]
         run_cmd(f"sudo yum install -y {' '.join(packages)}", "Install YUM packages")
@@ -51,7 +51,7 @@ def install_system_deps():
         run_cmd("sudo apt-get update", "Update package lists")
         packages = [
             "python3.11", "python3.11-dev", "gcc", "g++", "make",
-            "wget", "tar", "cmake", "swig", "libgmp-dev", "libreadline-dev",
+            "curl", "tar", "cmake", "swig", "libgmp-dev", "libreadline-dev",
             "zlib1g-dev", "libbz2-dev", "liblapack-dev", "libblas-dev", "gfortran"
         ]
         run_cmd(f"sudo apt-get install -y {' '.join(packages)}", "Install APT packages")
@@ -69,7 +69,7 @@ def main():
     install_system_deps()
 
     # Check dependencies are now available
-    deps = ["cmake", "make", "gcc", "g++", "wget", "tar", "python3"]
+    deps = ["cmake", "make", "gcc", "g++", "curl", "tar", "python3"]
     for dep in deps:
         if not shutil.which(dep):
             fatal_error(f"Required dependency still missing after install: {dep}")
@@ -88,15 +88,22 @@ def main():
     # Build SCIP from source
     run_cmd(f"mkdir -p {build_dir}", "Create build directory")
 
-    # Download
-    run_cmd(f"cd {build_dir} && wget -O scip-9.2.4.tar.gz 'https://scipopt.org/download.php?fname=scip-9.2.4.tar.gz'",
-            "Download SCIP 9.2.4")
+    # Download from official GitHub repository
+    scip_url = "https://github.com/scipopt/scip/archive/refs/tags/v9.2.4.tar.gz"
+    tar_name = "scip-9.2.4.tar.gz"
+
+    # Remove old tarball if exists (could be corrupted)
+    run_cmd(f"cd {build_dir} && rm -f {tar_name}", "Remove old SCIP tarball")
+
+    # Download with curl -L to follow redirects
+    run_cmd(f"cd {build_dir} && curl -L -o {tar_name} {scip_url}", "Download SCIP 9.2.4 from GitHub")
 
     # Extract
-    run_cmd(f"cd {build_dir} && tar xzf scip-9.2.4.tar.gz", "Extract SCIP")
+    run_cmd(f"cd {build_dir} && tar xzf {tar_name}", "Extract SCIP")
 
-    # Build
-    scip_src = build_dir / "scip-9.2.4"
+    # Build (find the extracted directory name)
+    run_cmd(f"cd {build_dir} && ls -la", "List extracted contents")
+    scip_src = build_dir / "scip-9.2.4"  # GitHub archive creates this name
     run_cmd(f"cd {scip_src} && mkdir -p build", "Create build directory")
 
     run_cmd(f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX={Path.cwd()/install_dir} -DPAPILO=off -DZIMPL=off -DIPOPT=off",
