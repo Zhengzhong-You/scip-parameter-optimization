@@ -317,13 +317,17 @@ def install_linux_dependencies(pkg_manager):
                 print_info("Extracting SCIP source...")
                 extract_cmd = f"cd {build_dir} && tar xzf scip-9.2.4.tar.gz"
                 if run_command(extract_cmd, "Extract SCIP", check=False):
-                    # Build and install
-                    print_info("Building SCIP (this takes 5-10 minutes)...")
+                    # Build and install to local directory (not /usr/local)
+                    # This works in containers without sudo access
+                    install_prefix = Path.cwd() / "scip_install"
+                    print_info(f"Building SCIP (this takes 5-10 minutes)...")
+                    print_info(f"Will install to: {install_prefix}")
+
                     build_commands = [
                         f"cd {scip_src} && mkdir -p build",
-                        f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local",
+                        f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX={install_prefix}",
                         f"cd {scip_src}/build && make -j$(nproc)",
-                        f"cd {scip_src}/build && sudo make install"
+                        f"cd {scip_src}/build && make install"  # No sudo needed for local install
                     ]
 
                     build_success = True
@@ -359,6 +363,7 @@ def install_linux_dependencies(pkg_manager):
 
                         # Verify SCIP is now accessible and report its location
                         scip_locations = [
+                            str(install_prefix / "bin/scip"),  # Local install (NEW!)
                             "/usr/local/bin/scip",
                             "/usr/bin/scip",
                             str(Path.home() / "miniconda3/bin/scip"),
@@ -531,13 +536,17 @@ def install_linux_dependencies(pkg_manager):
                 print_info("Extracting SCIP source...")
                 extract_cmd = f"cd {build_dir} && tar xzf scip-9.2.4.tar.gz"
                 if run_command(extract_cmd, "Extract SCIP", check=False):
-                    # Build and install
-                    print_info("Building SCIP (this takes 5-10 minutes)...")
+                    # Build and install to local directory (not /usr/local)
+                    # This works in containers without sudo access
+                    install_prefix = Path.cwd() / "scip_install"
+                    print_info(f"Building SCIP (this takes 5-10 minutes)...")
+                    print_info(f"Will install to: {install_prefix}")
+
                     build_commands = [
                         f"cd {scip_src} && mkdir -p build",
-                        f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local",
+                        f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX={install_prefix}",
                         f"cd {scip_src}/build && make -j$(nproc)",
-                        f"cd {scip_src}/build && sudo make install"
+                        f"cd {scip_src}/build && make install"  # No sudo needed for local install
                     ]
 
                     build_success = True
@@ -573,6 +582,7 @@ def install_linux_dependencies(pkg_manager):
 
                         # Verify SCIP is now accessible and report its location
                         scip_locations = [
+                            str(install_prefix / "bin/scip"),  # Local install (NEW!)
                             "/usr/local/bin/scip",
                             "/usr/bin/scip",
                             str(Path.home() / "miniconda3/bin/scip"),
@@ -835,6 +845,7 @@ def patch_scip_cli():
     # Debug: Check if SCIP exists in various locations
     print_info("Checking SCIP locations before patching:")
     scip_check_locations = [
+        "./scip_install/bin/scip",  # Local install (PRIORITY!)
         "/usr/local/bin/scip",
         "/usr/bin/scip",
         str(Path.home() / "miniconda3/bin/scip"),
@@ -893,6 +904,7 @@ def patch_scip_cli():
 
     # Check common installation locations
     common_locations = [
+        "./scip_install/bin/scip",  # Local install by install.py (PRIORITY!)
         "/usr/local/bin/scip",
         "/usr/bin/scip",
         os.path.expanduser("~/miniconda3/bin/scip"),
