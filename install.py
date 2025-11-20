@@ -39,8 +39,7 @@ def install_system_deps():
 
     # Detect package manager
     if shutil.which("yum"):
-        # RHEL/CentOS/Fedora
-        run_cmd("sudo yum install -y epel-release", "Enable EPEL repository")
+        # RHEL/CentOS/Fedora/AnolisOS
         packages = [
             "python3.11", "python3.11-devel", "gcc", "gcc-c++", "make",
             "wget", "tar", "cmake", "swig", "gmp-devel", "readline-devel",
