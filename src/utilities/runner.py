@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional
 
 from .version_check import ensure_scip_version
 from .logs import parse_scip_log_lines
+from .scip_cli import _scip_bin
 
 _VERSION_CHECKED = False
 
@@ -108,7 +109,7 @@ def run_instance(instance_path: str, params: Dict[str, Any], time_limit: float, 
     try:
         with open(log_path, "w", encoding="utf-8", errors="ignore") as lf:
             proc = subprocess.Popen([
-                os.environ.get("SCIP_BIN", "scip"), "-s", set_path
+                _scip_bin(), "-s", set_path
             ], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                text=True, bufsize=1, universal_newlines=True)
 
