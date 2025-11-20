@@ -88,8 +88,8 @@ def main():
     # Build SCIP from source
     run_cmd(f"mkdir -p {build_dir}", "Create build directory")
 
-    # Download from official GitHub repository
-    scip_url = "https://github.com/scipopt/scip/archive/refs/tags/v9.2.4.tar.gz"
+    # Download from official SCIP website
+    scip_url = "https://www.scipopt.org/download/release/scip-9.2.4.tgz"
     tar_name = "scip-9.2.4.tar.gz"
 
     # Remove old tarball if exists (could be corrupted)
