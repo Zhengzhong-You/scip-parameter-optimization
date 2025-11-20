@@ -325,14 +325,14 @@ def install_linux_dependencies(pkg_manager):
 
                     build_commands = [
                         f"cd {scip_src} && mkdir -p build",
-                        f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX={install_prefix}",
+                        f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX={install_prefix} -DPAPILO=off -DZIMPL=off -DIPOPT=off",
                         f"cd {scip_src}/build && make -j$(nproc)",
                         f"cd {scip_src}/build && make install"  # No sudo needed for local install
                     ]
 
                     build_success = True
                     for cmd in build_commands:
-                        if not run_command(cmd, f"Build step: {cmd.split('&&')[-1].strip()}", check=False):
+                        if not run_command(cmd, f"Build step: {cmd.split('&&')[-1].strip()}", check=True):
                             build_success = False
                             break
 
@@ -544,14 +544,14 @@ def install_linux_dependencies(pkg_manager):
 
                     build_commands = [
                         f"cd {scip_src} && mkdir -p build",
-                        f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX={install_prefix}",
+                        f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX={install_prefix} -DPAPILO=off -DZIMPL=off -DIPOPT=off",
                         f"cd {scip_src}/build && make -j$(nproc)",
                         f"cd {scip_src}/build && make install"  # No sudo needed for local install
                     ]
 
                     build_success = True
                     for cmd in build_commands:
-                        if not run_command(cmd, f"Build step: {cmd.split('&&')[-1].strip()}", check=False):
+                        if not run_command(cmd, f"Build step: {cmd.split('&&')[-1].strip()}", check=True):
                             build_success = False
                             break
 

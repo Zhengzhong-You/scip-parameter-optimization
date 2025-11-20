@@ -21,10 +21,14 @@ def _scip_bin() -> str:
 
     # Check common installation locations
     common_locations = [
+        "./scip_install/bin/scip",  # Local install by install.py (PRIORITY!)
         "/usr/local/bin/scip",
         "/usr/bin/scip",
         os.path.expanduser("~/miniconda3/bin/scip"),
         os.path.expanduser("~/anaconda3/bin/scip"),
+        os.path.expanduser("~/.local/bin/scip"),
+        "./scip",  # Current directory
+        "../scip", # Parent directory
     ]
 
     for location in common_locations:
