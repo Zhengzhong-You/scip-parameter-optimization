@@ -131,7 +131,9 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
     s.t. z_i ≥ b - b̂_i(x)     ∀i ∈ T
          z_i ≥ b̂_i(x) - b     ∀i ∈ T
          z_i ≥ 0              ∀i ∈ T
-         1+ε ≤ x ≤ √2-ε,  b ≥ 3
+         b̂_i(x) bounded within range_factor across samples
+         b ≥ underline_b (empirical lower bound), b ≥ 3
+         1+ε ≤ x ≤ √2-ε
 
     where b̂_i(x) = e_i + u_i * x^{g_i} is the per-sample proxy for final processed-node count.
 
@@ -148,6 +150,59 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
 
     if len(samples) < 2:
         return {"error": "insufficient_samples", "samples": len(samples)}
+
+    def _compute_lower_bound_b(sample_seq: List[Dict[str, Any]]) -> float:
+        """
+        Data-driven lower bound underline_b = e_k + u_k + g_k / delta_bar where
+        delta_bar is the observed average gap reduction per processed node
+        between the earliest larger-gap sample and the tail sample.
+        """
+        if len(sample_seq) < 2:
+            return 3.0
+
+        k_idx = len(sample_seq) - 1
+        k_sample = sample_seq[k_idx]
+
+        try:
+            e_k = float(k_sample.get("e_i", 0.0))
+            u_k = float(k_sample.get("u_i", 0.0))
+            g_k = float(k_sample.get("g_i", 0.0))
+        except Exception:
+            return 3.0
+
+        # Earliest index p < k such that g_p > g_k
+        p_idx = None
+        for idx, sample in enumerate(sample_seq[:-1]):
+            try:
+                if float(sample.get("g_i", 0.0)) > g_k:
+                    p_idx = idx
+                    break
+            except Exception:
+                continue
+
+        if p_idx is None:
+            return 3.0
+
+        try:
+            e_p = float(sample_seq[p_idx].get("e_i", 0.0))
+            g_p = float(sample_seq[p_idx].get("g_i", 0.0))
+        except Exception:
+            return 3.0
+
+        delta_gap = g_p - g_k
+        delta_nodes = e_k - e_p
+        if delta_gap <= 0 or delta_nodes <= 0:
+            return 3.0
+
+        bar_delta = delta_gap / delta_nodes
+        if bar_delta <= 0:
+            return 3.0
+
+        lower = e_k + u_k + (g_k / bar_delta if bar_delta > 0 else 0.0)
+        if not math.isfinite(lower):
+            return 3.0
+
+        return max(3.0, lower)
 
     # Filter samples by unique gaps (from last to first)
     n = len(samples)
@@ -172,13 +227,18 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
         return {"error": "insufficient_unique_gaps", "samples": len(unique_gap_samples), "required": min_required}
 
     # Use up to 10% of total samples, but from the unique gap samples
-    max_samples = min(int(0.1 * n), len(unique_gap_samples), 100)
+    max_samples = min(max(int(0.1 * n), 2), len(unique_gap_samples), 100)
     selected_samples = unique_gap_samples[-max_samples:]  # Take most recent unique gap samples
 
     if not silent:
         print(f"L1 MINLP: Using {len(selected_samples)}/{len(unique_gap_samples)} unique gap samples ({len(unique_gap_samples)}/{n} total unique)")
         sample_times_str = ', '.join(f"{s.get('t_i', 0):.1f}" for s in selected_samples)
         print(f"Sample times: [{sample_times_str}]")
+
+    # Empirical gap-based floor underline_b to avoid overly optimistic b
+    b_lower_bound = _compute_lower_bound_b(selected_samples)
+    if not silent:
+        print(f"Lower bound underline_b: {b_lower_bound:.3f}")
 
     if debug:
         print(f"\n=== L1 MINLP Debug: Sample Details ===")
@@ -204,7 +264,8 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
         x_lb = 1.0 + eps
         x_ub = math.sqrt(2.0) - eps
         x = m.addVar(name="x", vtype="C", lb=x_lb, ub=x_ub)
-        b = m.addVar(name="b", vtype="C", lb=3.0)
+        b_lb = max(3.0, b_lower_bound)
+        b = m.addVar(name="b", vtype="C", lb=b_lb)
 
         # Auxiliary variables z_i for L1 norm linearization
         z = [m.addVar(name=f"z_{i}", vtype="C", lb=0.0) for i in range(len(selected_samples))]
@@ -300,6 +361,7 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
                 "phi_star": phi_star,  # Growth factor φ = x
                 "objective": obj_val,  # L1 discrepancy
                 "status": status,
+                "b_lower_bound": b_lower_bound,
                 "samples_used": len(selected_samples),
                 "solver": "L1_MINLP"
             }
@@ -455,6 +517,9 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
         print(f"Solution bounds: primal={primal}, dual={dual}{gap_str}", flush=True)
         print(f"  Extracted {len(samples)} log samples for SVB fitting, samples_used: {svb_result.get('samples_used', 'N/A')}", flush=True)
         print(f"  b_hat (predicted total nodes): {b_hat:.6f}", flush=True)
+        b_lb_val = svb_result.get("b_lower_bound")
+        if b_lb_val is not None:
+            print(f"  underline_b (lower bound on b): {b_lb_val:.6f}", flush=True)
         print(f"  phi_star (growth factor): {svb_result.get('phi_star', 'N/A')}", flush=True)
         print(f"  Current processed nodes: {b_last_sample}, Remaining nodes (from log): {u_last_sample:.1f}", flush=True)
         print(f"  theta_hat: {theta_hat:.6f} seconds per node", flush=True)
@@ -469,6 +534,7 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
         "b_last_sample": b_last_sample,
         "remaining_nodes": remaining_nodes,
         "theta_hat": theta_hat,
+        "b_lower_bound": svb_result.get("b_lower_bound"),
         "phi_star": svb_result.get("phi_star"),
         "x_star": svb_result.get("x_star"),
         "svb_objective": svb_result.get("objective"),
