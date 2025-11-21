@@ -77,10 +77,10 @@ def run_smac(whitelist: List[Dict[str, Any]], instance: str, runner_fn, tau: flo
             best_dict[k] = str(val)
 
     # Evaluate best config
-    out = runner_fn(best_dict, instance, tau)
+    best_result = runner_fn(best_dict, instance, tau)
     name = Path(instance).stem
-    per_m = {name: out}
-    per_logs = [{"instance": instance, **out}]
+    per_m = {name: best_result}
+    per_logs = [{"instance": instance, **best_result}]
     tinf_best = per_instance_T_infty(per_m, tau=tau)
     best_L = r_hat_ratio(tinf_best, tinf_base, cap=1e3)
 
