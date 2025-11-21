@@ -33,25 +33,54 @@ def run_cmd(cmd, desc):
     print(f"\033[92m✓ {desc}\033[0m")
 
 
+def ensure_cmake():
+    """Install pip-based CMake to avoid system CMake libuv issues"""
+    print("\033[94mInstalling pip-based CMake to avoid system libuv issues...\033[0m")
+
+    # Install cmake via pip to avoid broken system cmake
+    run_cmd("python3 -m pip install --user cmake", "Install pip-based CMake")
+
+    # Find the installed cmake binary
+    cmake_locations = [
+        Path.home() / ".local/bin/cmake",
+        "/usr/local/bin/cmake",
+        "cmake"  # fallback
+    ]
+
+    for location in cmake_locations:
+        if isinstance(location, Path):
+            if location.is_file() and os.access(location, os.X_OK):
+                cmake_path = str(location)
+                print(f"\033[92m✓ Found pip CMake: {cmake_path}\033[0m")
+                return cmake_path
+        else:
+            if shutil.which(location):
+                cmake_path = shutil.which(location)
+                print(f"\033[92m✓ Found CMake: {cmake_path}\033[0m")
+                return cmake_path
+
+    fatal_error("CMake not found after pip install")
+
+
 def install_system_deps():
     """Install system dependencies"""
     print("\033[94mInstalling system dependencies...\033[0m")
 
     # Detect package manager
     if shutil.which("yum"):
-        # RHEL/CentOS/Fedora/AnolisOS
+        # RHEL/CentOS/Fedora/AnolisOS - exclude cmake as we'll use pip version
         packages = [
             "python3.11", "python3.11-devel", "gcc", "gcc-c++", "make",
-            "curl", "tar", "cmake", "swig", "gmp-devel", "readline-devel",
+            "curl", "tar", "swig", "gmp-devel", "readline-devel",
             "zlib-devel", "bzip2-devel", "lapack-devel", "blas-devel", "gcc-gfortran"
         ]
         run_cmd(f"sudo yum install -y {' '.join(packages)}", "Install YUM packages")
     elif shutil.which("apt-get"):
-        # Debian/Ubuntu
+        # Debian/Ubuntu - exclude cmake as we'll use pip version
         run_cmd("sudo apt-get update", "Update package lists")
         packages = [
             "python3.11", "python3.11-dev", "gcc", "g++", "make",
-            "curl", "tar", "cmake", "swig", "libgmp-dev", "libreadline-dev",
+            "curl", "tar", "swig", "libgmp-dev", "libreadline-dev",
             "zlib1g-dev", "libbz2-dev", "liblapack-dev", "libblas-dev", "gfortran"
         ]
         run_cmd(f"sudo apt-get install -y {' '.join(packages)}", "Install APT packages")
@@ -68,8 +97,11 @@ def main():
     # Install system dependencies first
     install_system_deps()
 
-    # Check dependencies are now available
-    deps = ["cmake", "make", "gcc", "g++", "curl", "tar", "python3"]
+    # Install pip-based CMake to avoid system CMake libuv issues
+    cmake_bin = ensure_cmake()
+
+    # Check dependencies are now available (exclude cmake - we'll install via pip)
+    deps = ["make", "gcc", "g++", "curl", "tar", "python3"]
     for dep in deps:
         if not shutil.which(dep):
             fatal_error(f"Required dependency still missing after install: {dep}")
@@ -106,7 +138,7 @@ def main():
     scip_src = build_dir / "scip-9.2.4"  # GitHub archive creates this name
     run_cmd(f"cd {scip_src} && mkdir -p build", "Create build directory")
 
-    run_cmd(f"cd {scip_src}/build && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX={Path.cwd()/install_dir} -DPAPILO=off -DZIMPL=off -DIPOPT=off",
+    run_cmd(f"cd {scip_src}/build && {cmake_bin} .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX={Path.cwd()/install_dir} -DPAPILO=off -DZIMPL=off -DIPOPT=off",
             "Configure SCIP")
 
     run_cmd(f"cd {scip_src}/build && make -j$(nproc || echo 4)", "Compile SCIP")
