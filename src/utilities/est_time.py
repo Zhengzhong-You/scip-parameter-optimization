@@ -122,7 +122,8 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
                              tau_c: float = 60.0,
                              eps: float = 1e-6,
                              debug: bool = False,
-                             range_factor: float = 2.0) -> Dict[str, Any]:
+                             range_factor: float = 2.0,
+                             silent: bool = False) -> Dict[str, Any]:
     """
     Implement L1 MINLP optimization from paper equation (4):
 
@@ -166,16 +167,18 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
     # Check if we have enough unique gap samples (at least 10% of total)
     min_required = max(int(0.1 * n), 2)  # At least 10% or minimum 2 samples
     if len(unique_gap_samples) < min_required:
-        print(f"L1 MINLP: Insufficient unique gap samples {len(unique_gap_samples)}/{n} (need ≥{min_required})")
+        if not silent:
+            print(f"L1 MINLP: Insufficient unique gap samples {len(unique_gap_samples)}/{n} (need ≥{min_required})")
         return {"error": "insufficient_unique_gaps", "samples": len(unique_gap_samples), "required": min_required}
 
     # Use up to 10% of total samples, but from the unique gap samples
     max_samples = min(int(0.1 * n), len(unique_gap_samples), 100)
     selected_samples = unique_gap_samples[-max_samples:]  # Take most recent unique gap samples
 
-    print(f"L1 MINLP: Using {len(selected_samples)}/{len(unique_gap_samples)} unique gap samples ({len(unique_gap_samples)}/{n} total unique)")
-    sample_times_str = ', '.join(f"{s.get('t_i', 0):.1f}" for s in selected_samples)
-    print(f"Sample times: [{sample_times_str}]")
+    if not silent:
+        print(f"L1 MINLP: Using {len(selected_samples)}/{len(unique_gap_samples)} unique gap samples ({len(unique_gap_samples)}/{n} total unique)")
+        sample_times_str = ', '.join(f"{s.get('t_i', 0):.1f}" for s in selected_samples)
+        print(f"Sample times: [{sample_times_str}]")
 
     if debug:
         print(f"\n=== L1 MINLP Debug: Sample Details ===")
@@ -364,7 +367,7 @@ def estimate_theta_hat(log_text: str, summary: Dict[str, Any], window: int = Non
     return (t / b) if b > 0 else max(t, 1e-9)
 
 
-def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, Any], debug: bool = False) -> Dict[str, Any]:
+def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, Any], debug: bool = False, silent: bool = False) -> Dict[str, Any]:
     """
     Compute T̂_∞(p;i,E,τ) surrogate from paper definition:
 
@@ -417,7 +420,7 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
         }
 
     # Fit SVB growth factor using L1 MINLP
-    svb_result = fit_svb_growth_factor_l1(samples, debug=debug, range_factor=2.0)
+    svb_result = fit_svb_growth_factor_l1(samples, debug=debug, range_factor=2.0, silent=silent)
     if svb_result.get("error"):
         # SVB fitting failed - return T_infinity = 1e9 as requested
         return {
@@ -430,12 +433,14 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
     # Get b̂ from SVB result
     b_hat = svb_result["b_star"]
 
-    # Get b_last_sample (final processed nodes)
+    # Get b_last_sample (final processed nodes) and u_last_sample (actual remaining nodes from log)
     samples = extract_log_samples(log_text)
     if samples:
         b_last_sample = samples[-1]['e_i']  # e_i is cumulative processed nodes
+        u_last_sample = samples[-1]['u_i']  # u_i is actual remaining nodes from log
     else:
         b_last_sample = float(summary.get("n_nodes", 0.0) or 0.0)
+        u_last_sample = 0.0
 
     # Calculate θ̂ (theta_hat) - empirical time per processed node
     theta_hat = estimate_theta_hat(log_text, summary)
@@ -444,17 +449,18 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
     remaining_nodes = max(b_hat - b_last_sample, 0.0)
     T_infinity = float(tau) + theta_hat * remaining_nodes
 
-    # Compact output exactly as requested
-    gap_str = f", Final gap: {gap_final:.1f}" if gap_final is not None else ""
-    print(f"Solution bounds: primal={primal}, dual={dual}{gap_str}", flush=True)
-    print(f"  Extracted {len(samples)} log samples for SVB fitting, samples_used: {svb_result.get('samples_used', 'N/A')}", flush=True)
-    print(f"  b_hat (predicted total nodes): {b_hat:.6f}", flush=True)
-    print(f"  phi_star (growth factor): {svb_result.get('phi_star', 'N/A')}", flush=True)
-    print(f"  Current processed nodes: {b_last_sample}", flush=True)
-    print(f"  theta_hat: {theta_hat:.6f} seconds per node", flush=True)
-    print(f"  Final T_infinity computation:", flush=True)
-    print(f"    Remaining nodes: max({b_hat:.1f} - {b_last_sample}, 0) = {remaining_nodes:.1f}", flush=True)
-    print(f"    T_infinity = {tau} + {theta_hat:.6f} * {remaining_nodes:.1f} = {T_infinity:.2f}s", flush=True)
+    # Compact output exactly as requested (only if not silent)
+    if not silent:
+        gap_str = f", Final gap: {gap_final:.1f}" if gap_final is not None else ""
+        print(f"Solution bounds: primal={primal}, dual={dual}{gap_str}", flush=True)
+        print(f"  Extracted {len(samples)} log samples for SVB fitting, samples_used: {svb_result.get('samples_used', 'N/A')}", flush=True)
+        print(f"  b_hat (predicted total nodes): {b_hat:.6f}", flush=True)
+        print(f"  phi_star (growth factor): {svb_result.get('phi_star', 'N/A')}", flush=True)
+        print(f"  Current processed nodes: {b_last_sample}, Remaining nodes (from log): {u_last_sample:.1f}", flush=True)
+        print(f"  theta_hat: {theta_hat:.6f} seconds per node", flush=True)
+        print(f"  Final T_infinity computation:", flush=True)
+        print(f"    Remaining nodes: max({b_hat:.1f} - {b_last_sample}, 0) = {remaining_nodes:.1f}", flush=True)
+        print(f"    T_infinity = {tau} + {theta_hat:.6f} * {remaining_nodes:.1f} = {T_infinity:.2f}s", flush=True)
 
     return {
         "T_infinity": T_infinity,
@@ -527,7 +533,7 @@ def estimate_svb_from_log(log_text: str) -> Dict[str, Any]:
     if len(samples) < 2:
         return {"a": None, "kappa": None, "C": None, "varphi": None, "samples": 0}
 
-    svb_result = fit_svb_growth_factor_l1(samples)
+    svb_result = fit_svb_growth_factor_l1(samples, silent=True)
     if svb_result.get("error"):
         return {"a": None, "kappa": None, "C": None, "varphi": None, "samples": 0}
 
@@ -576,7 +582,7 @@ def estimate_total_nodes_svb(log_text: str, summary: Dict[str, Any]) -> Dict[str
     if len(samples) < 2:
         return {"error": "insufficient_samples"}
 
-    svb_result = fit_svb_growth_factor_l1(samples)
+    svb_result = fit_svb_growth_factor_l1(samples, silent=True)
     if svb_result.get("error"):
         return {"error": svb_result.get("error")}
 

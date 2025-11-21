@@ -216,7 +216,7 @@ def diagnose_t_infty(log_text: str, tau: float, summary: Dict[str, Any]) -> Dict
     from utilities.est_time import compute_t_infinity_surrogate
 
     try:
-        result = compute_t_infinity_surrogate(log_text, tau, summary)
+        result = compute_t_infinity_surrogate(log_text, tau, summary, silent=True)
 
         diagnostic = {
             "status": "success",

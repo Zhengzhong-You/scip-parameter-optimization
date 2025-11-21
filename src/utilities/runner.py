@@ -85,6 +85,43 @@ def _parse_summary(log_path: str) -> Dict[str, Any]:
     return out
 
 
+def _print_trial_summary(metrics: Dict[str, Any], instance_path: str, trial_id: Optional[int] = None) -> None:
+    """Print trial summary in SCIP format to terminal"""
+    print(f"\n{'='*60}")
+    print(f"TRIAL SUMMARY - {os.path.basename(instance_path)}" + (f" (Trial {trial_id})" if trial_id is not None else ""))
+    print(f"{'='*60}")
+
+    # Format status
+    status = metrics.get("status", "unknown")
+    print(f"SCIP Status        : {status}")
+
+    # Format solving time
+    solve_time = metrics.get("solve_time", 0.0)
+    print(f"Solving Time (sec) : {solve_time:.2f}")
+
+    # Format nodes if available
+    n_nodes = metrics.get("n_nodes")
+    if n_nodes is not None:
+        print(f"Solving Nodes      : {n_nodes}")
+
+    # Format primal bound
+    primal = metrics.get("primal")
+    if primal is not None and primal != float("inf"):
+        print(f"Primal Bound       : {primal:+.14e}")
+
+    # Format dual bound
+    dual = metrics.get("dual")
+    if dual is not None and dual != float("inf"):
+        print(f"Dual Bound         : {dual:+.14e}")
+
+    # Format gap
+    gap = metrics.get("gap")
+    if gap is not None:
+        print(f"Gap                : {gap*100:.2f} %")
+
+    print(f"{'='*60}\n")
+
+
 def run_instance(instance_path: str, params: Dict[str, Any], time_limit: float, outdir: str, seed: Optional[int] = None, trial_id: Optional[int] = None) -> Dict[str, Any]:
     os.makedirs(outdir, exist_ok=True)
     log_dir = os.path.join(outdir, "log"); os.makedirs(log_dir, exist_ok=True)
@@ -127,6 +164,13 @@ def run_instance(instance_path: str, params: Dict[str, Any], time_limit: float, 
         raise RuntimeError("SCIP CLI not found. Ensure 'scip' is in PATH or set SCIP_BIN to the SCIP binary path.")
     end = time.time()
 
+    # Validate log file exists and is not empty
+    if not os.path.exists(log_path):
+        raise RuntimeError(f"FATAL ERROR: SCIP log file not found: {log_path}")
+
+    if os.path.getsize(log_path) == 0:
+        raise RuntimeError(f"FATAL ERROR: SCIP log file is empty: {log_path}")
+
     summary = _parse_summary(log_path)
     metrics: Dict[str, Any] = {
         "timestamp": ts,
@@ -143,5 +187,9 @@ def run_instance(instance_path: str, params: Dict[str, Any], time_limit: float, 
         "obj_sense": None,
         "applied_params": params or {},
     }
+
+    # Print trial summary to terminal
+    _print_trial_summary(metrics, instance_path, trial_id)
+
     return metrics
 

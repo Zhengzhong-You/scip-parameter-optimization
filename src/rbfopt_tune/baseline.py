@@ -69,7 +69,7 @@ def run_rbfopt(whitelist: List[Dict[str, Any]], runner_fn, instance: str, tau: f
             if log_path and os.path.exists(log_path):
                 with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
                     log_text = f.read()
-                est_result = compute_t_infinity_surrogate(log_text, tau, out)
+                est_result = compute_t_infinity_surrogate(log_text, tau, out, silent=True)
 
                 # Extract terminal sample times
                 samples = extract_log_samples(log_text)
