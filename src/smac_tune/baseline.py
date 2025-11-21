@@ -86,14 +86,27 @@ def run_smac(whitelist: List[Dict[str, Any]], instance: str, runner_fn, tau: flo
 
     trials_df = pd.DataFrame([{"trial": -1, "r_hat": float(best_L), "config": json.dumps(best_dict), "total_time": total_time}])
 
-    # Output directory already created above
-    (out / "best_config.json").write_text(json.dumps(best_dict, indent=2))
-    (out / "best_R_hat.txt").write_text(str(best_L))
-    (out / "per_instance.json").write_text(json.dumps(per_logs, indent=2))
-    (out / "tinf_candidate.json").write_text(json.dumps(tinf_best, indent=2))
+    # Print optimal configuration to terminal
+    print(f"\n=== SMAC OPTIMIZATION SUMMARY ===")
+    print(f"Best R_hat: {best_L:.6f}")
+    print(f"Best configuration: {best_dict}")
+    print(f"Total optimization time: {total_time:.2f}s")
 
-    # Unified CSV schema
-    trials_df.to_csv(out / "trials.csv", index=False)
+    # Output directory already created above - wrapped in try-catch for robustness
+    try:
+        (out / "best_config.json").write_text(json.dumps(best_dict, indent=2))
+        (out / "best_R_hat.txt").write_text(str(best_L))
+        (out / "per_instance.json").write_text(json.dumps(per_logs, indent=2))
+        (out / "tinf_candidate.json").write_text(json.dumps(tinf_best, indent=2))
+    except Exception as e:
+        print(f"WARNING: Failed to write output files: {e}")
+        print(f"Optimal configuration still available above!")
+
+    # Unified CSV schema - wrapped in try-catch for robustness
+    try:
+        trials_df.to_csv(out / "trials.csv", index=False)
+    except Exception as e:
+        print(f"WARNING: Failed to write trials.csv: {e}")
     # Build per-instance CSV: instance, T_infty, and a few summary fields if available
     import csv as _csv
     with open(out / "per_instance.csv", "w", newline="", encoding="utf-8") as f:
