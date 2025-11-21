@@ -29,6 +29,7 @@ Functions:
 
 from __future__ import annotations
 import math
+import time
 from typing import Dict, Any, List, Tuple
 from .log_utils import parse_progress_series, _slice_after_last_restart
 
@@ -119,8 +120,8 @@ def extract_log_samples(log_text: str, tau_c: float = None) -> List[Dict[str, An
 
 
 def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
-                             tau_c: float = 60.0,
-                             eps: float = 1e-6,
+                             tau_c: float = 120.0,
+                             eps: float = 1e-3,
                              debug: bool = False,
                              range_factor: float = 2.0,
                              silent: bool = False) -> Dict[str, Any]:
@@ -219,15 +220,14 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
     # Reverse to maintain chronological order
     unique_gap_samples.reverse()
 
-    # Check if we have enough unique gap samples (at least 10% of total)
-    min_required = max(int(0.1 * n), 2)  # At least 10% or minimum 2 samples
+    # Require an absolute minimum of unique gap samples; cap usage at 20
+    min_required = 10
     if len(unique_gap_samples) < min_required:
         if not silent:
             print(f"L1 MINLP: Insufficient unique gap samples {len(unique_gap_samples)}/{n} (need ≥{min_required})")
         return {"error": "insufficient_unique_gaps", "samples": len(unique_gap_samples), "required": min_required}
 
-    # Use up to 10% of total samples, but from the unique gap samples
-    max_samples = min(max(int(0.1 * n), 2), len(unique_gap_samples), 100)
+    max_samples = min(len(unique_gap_samples), 20)
     selected_samples = unique_gap_samples[-max_samples:]  # Take most recent unique gap samples
 
     if not silent:
@@ -311,13 +311,15 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
         m.setRealParam("numerics/sumepsilon", 1e-6)
         m.setRealParam("limits/gap", 1e-6)        # Much tighter gap tolerance
         m.setRealParam("limits/absgap", 1e-3)     # Much tighter absolute gap
-        m.setRealParam("limits/time", tau_c)  # 60s time limit as in paper
+        m.setRealParam("limits/time", tau_c)  # Extended time limit for robustness
         m.setIntParam("display/verblevel", 4 if debug else 0)  # Show detailed output when debug=True
         m.setBoolParam("misc/catchctrlc", False)
         m.setIntParam("presolving/maxrounds", 10)  # More presolving rounds for better accuracy
 
         # Solve L1 MINLP
+        solve_start = time.time()
         m.optimize()
+        solve_time = time.time() - solve_start
         status = m.getStatus()
 
         if status in ["optimal", "timelimit", "gaplimit"] and m.getNSols() > 0:
@@ -361,6 +363,7 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
                 "phi_star": phi_star,  # Growth factor φ = x
                 "objective": obj_val,  # L1 discrepancy
                 "status": status,
+                "solve_time": solve_time,
                 "b_lower_bound": b_lower_bound,
                 "samples_used": len(selected_samples),
                 "solver": "L1_MINLP"
@@ -369,6 +372,7 @@ def fit_svb_growth_factor_l1(samples: List[Dict[str, Any]],
             return {
                 "error": "optimization_failed",
                 "status": status,
+                "solve_time": solve_time,
                 "samples_used": len(selected_samples)
             }
 
@@ -520,6 +524,9 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
         b_lb_val = svb_result.get("b_lower_bound")
         if b_lb_val is not None:
             print(f"  underline_b (lower bound on b): {b_lb_val:.6f}", flush=True)
+        fit_time = svb_result.get("solve_time")
+        if fit_time is not None:
+            print(f"  SVB fit solve time: {fit_time:.3f}s", flush=True)
         print(f"  phi_star (growth factor): {svb_result.get('phi_star', 'N/A')}", flush=True)
         print(f"  Current processed nodes: {b_last_sample}, Remaining nodes (from log): {u_last_sample:.1f}", flush=True)
         print(f"  theta_hat: {theta_hat:.6f} seconds per node", flush=True)
@@ -539,6 +546,7 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
         "x_star": svb_result.get("x_star"),
         "svb_objective": svb_result.get("objective"),
         "samples_used": svb_result.get("samples_used"),
+        "svb_solve_time": svb_result.get("solve_time"),
         "method": "new_formula_tau_plus_theta_times_remaining"
     }
 
