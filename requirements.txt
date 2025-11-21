@@ -1,41 +1,44 @@
 # SCIP Parameter Optimization Framework Requirements
-# Core dependencies with fixed versions for reproducibility
+# Looser, but still bounded versions for better portability
 
-# Scientific Computing
-numpy==2.3.4
-scipy==1.16.3
-pandas==2.3.3
-scikit-learn==1.7.2
+# --- Scientific Computing ---
+# Your container's mirror has NumPy up to 2.0.2, so we allow 2.0.x
+numpy>=1.24,<2.1
+scipy>=1.11,<1.17
+pandas>=2.0,<2.4
+scikit-learn>=1.3,<1.8
 
-# Optimization Libraries
-PySCIPOpt==5.6.0
-pyomo==6.9.5
-rbfopt==4.3.0
-smac==2.3.1
+# --- Optimization Libraries ---
+# Keep PySCIPOpt 5.x (5.6.0 is fine, but allow patch updates)
+PySCIPOpt>=5.4,<6.0
+pyomo>=6.6,<7.1
+rbfopt>=4.2,<4.4
+smac>=2.3,<2.4
 
-# Configuration and Hyperparameter Space
-ConfigSpace==1.2.1
-PyYAML==6.0.3
+# --- Configuration and Hyperparameter Space ---
+ConfigSpace>=1.1,<1.3
+PyYAML>=6.0,<6.1
 
-# Machine Learning for GPT Integration
-openai==2.7.2
-pydantic==2.12.4
-pydantic-core==2.41.5
+# --- LLM / OpenAI Integration ---
+openai>=1.0,<3.0
+pydantic>=2.6,<3.0
+pydantic-core>=2.16,<3.0
 
-# Parallel Computing
-joblib==1.5.2
-dask==2025.11.0
-cloudpickle==3.1.2
+# --- Parallel / Distributed Computing ---
+joblib>=1.3,<1.6
+# Dask versioning is weird; allow any recent 202x, but avoid pinning a future one
+dask>=2023.1.0,<2026.1.0
+cloudpickle>=3.0,<4.0
 
-# Utilities
-tqdm==4.67.1
-click==8.3.0
-requests==2.32.5
+# --- Utilities ---
+tqdm>=4.65,<5.0
+click>=8.1,<9.0
+requests>=2.31,<2.33
 
-# Data Processing
-openpyxl==3.1.5
+# --- Data Processing ---
+openpyxl>=3.1,<3.2
 
-# Development Dependencies (optional)
-# Uncomment if needed for documentation or testing
-# Sphinx==8.2.3
-# numpydoc==1.9.0
+# --- Optional dev deps ---
+# Sphinx and numpydoc can stay unpinned or lightly pinned if you need them:
+# Sphinx>=7.0,<9.0
+# numpydoc>=1.6,<2.0
