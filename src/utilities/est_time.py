@@ -433,7 +433,7 @@ def estimate_theta_hat(log_text: str, summary: Dict[str, Any], window: int = Non
     return (t / b) if b > 0 else max(t, 1e-9)
 
 
-def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, Any], debug: bool = False, silent: bool = False) -> Dict[str, Any]:
+def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, Any], debug: bool = False, silent: bool = False, report: bool = True) -> Dict[str, Any]:
     """
     Compute T̂_∞(p;i,E,τ) surrogate from paper definition:
 
@@ -489,6 +489,8 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
     svb_result = fit_svb_growth_factor_l1(samples, debug=debug, range_factor=2.0, silent=silent)
     if svb_result.get("error"):
         # SVB fitting failed - return T_infinity = 1e9 as requested
+        if report:
+            print(f"SVB fit failed: {svb_result.get('error')} (samples_used={svb_result.get('samples_used', 'N/A')})", flush=True)
         return {
             "T_infinity": 1e9,
             "solved": False,
@@ -515,8 +517,8 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
     remaining_nodes = max(b_hat - b_last_sample, 0.0)
     T_infinity = float(tau) + theta_hat * remaining_nodes
 
-    # Compact output exactly as requested (only if not silent)
-    if not silent:
+    # Compact output exactly as requested (controlled by report flag)
+    if report:
         gap_str = f", Final gap: {gap_final:.1f}" if gap_final is not None else ""
         print(f"Solution bounds: primal={primal}, dual={dual}{gap_str}", flush=True)
         print(f"  Extracted {len(samples)} log samples for SVB fitting, samples_used: {svb_result.get('samples_used', 'N/A')}", flush=True)
@@ -547,6 +549,7 @@ def compute_t_infinity_surrogate(log_text: str, tau: float, summary: Dict[str, A
         "svb_objective": svb_result.get("objective"),
         "samples_used": svb_result.get("samples_used"),
         "svb_solve_time": svb_result.get("solve_time"),
+        "svb_reported": bool(report),
         "method": "new_formula_tau_plus_theta_times_remaining"
     }
 
