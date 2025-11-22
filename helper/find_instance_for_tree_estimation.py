@@ -13,13 +13,21 @@ import argparse
 import os
 import subprocess
 import sys
+import tempfile
 
 from utilities.scip_cli import ensure_version, _scip_bin
 
 
-def build_scip_script(instance_path: str, time_limit: float) -> str:
+def create_scip_settings_file(time_limit: float) -> str:
+    """Create .set file with parameters (matching runner.py approach)"""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".set", delete=False) as f:
+        f.write(f"limits/time = {float(time_limit)}\n")  # .set file uses / syntax
+        return f.name
+
+
+def build_scip_script(instance_path: str) -> str:
+    """Build script commands (no time limit here, it's in .set file)"""
     cmds = [
-        f"set limits time {float(time_limit)}",
         f"read {instance_path}",
         "optimize",
         "quit",
@@ -48,18 +56,29 @@ def main() -> None:
     ensure_version("9.2.4")
     scip_bin = _scip_bin()
 
-    script = build_scip_script(instance_path, args.time_limit)
+    # Create .set file with time limit (matching runner.py approach)
+    set_file_path = create_scip_settings_file(args.time_limit)
+    script = build_scip_script(instance_path)
 
     print(f"Running SCIP 9.2.4 on {instance_path} (time limit: {args.time_limit}s)...", flush=True)
-    proc = subprocess.run(
-        [scip_bin],
-        input=script,
-        text=True,
-    )
 
-    if proc.returncode != 0:
-        print(f"SCIP exited with return code {proc.returncode}", file=sys.stderr)
-        sys.exit(proc.returncode)
+    try:
+        proc = subprocess.run(
+            [scip_bin, "-s", set_file_path],  # Use -s flag like runner.py
+            input=script,
+            text=True,
+        )
+
+        if proc.returncode != 0:
+            print(f"SCIP exited with return code {proc.returncode}", file=sys.stderr)
+            sys.exit(proc.returncode)
+
+    finally:
+        # Clean up temporary .set file
+        try:
+            os.unlink(set_file_path)
+        except OSError:
+            pass
 
 
 if __name__ == "__main__":
