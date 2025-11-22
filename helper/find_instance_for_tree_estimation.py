@@ -2,9 +2,8 @@
 """
 Run a single instance with SCIP 9.2.4 using default parameters for tree-size estimation.
 
-- Uses default SCIP parameters.
+- Uses default SCIP parameters (no overrides).
 - Sets a 1200s time limit (override with --time-limit if needed).
-- Aligns display verbosity with existing scripts (display freq = 100 by default).
 - Streams output directly to the terminal; no log files are written.
 """
 
@@ -18,11 +17,9 @@ import sys
 from utilities.scip_cli import ensure_version, _scip_bin
 
 
-def build_scip_script(instance_path: str, time_limit: float, display_freq: int) -> str:
+def build_scip_script(instance_path: str, time_limit: float) -> str:
     cmds = [
-        "set default",
-        f"set limits/time {float(time_limit)}",
-        f"set display freq {int(display_freq)}",
+        f"set limits time {float(time_limit)}",
         f"read {instance_path}",
         "optimize",
         "quit",
@@ -41,12 +38,6 @@ def main() -> None:
         default=1200.0,
         help="Time limit in seconds (default: 1200)",
     )
-    parser.add_argument(
-        "--display-freq",
-        type=int,
-        default=100,
-        help="SCIP display frequency (matches existing scripts)",
-    )
     args = parser.parse_args()
 
     instance_path = os.path.abspath(args.instance)
@@ -57,7 +48,7 @@ def main() -> None:
     ensure_version("9.2.4")
     scip_bin = _scip_bin()
 
-    script = build_scip_script(instance_path, args.time_limit, args.display_freq)
+    script = build_scip_script(instance_path, args.time_limit)
 
     print(f"Running SCIP 9.2.4 on {instance_path} (time limit: {args.time_limit}s)...", flush=True)
     proc = subprocess.run(
